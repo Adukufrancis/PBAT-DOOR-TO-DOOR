@@ -14,21 +14,31 @@
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-<nav class="nav">
+<a class="skip" href="#main">Skip to content</a>
+<nav class="nav" id="site-nav">
   <div class="wrap">
     <a class="brand" href="/" aria-label="PBAT Door to Door home">
       <img class="brand-logo" src="/images/logo-transparent.png" alt="PBAT Door to Door Movement 2027" width="900" height="563">
     </a>
     <div class="nav-links">
-      <a href="/">Home</a>
-      <a class="hide-sm" href="/#works">His works</a>
+      <a href="/#about">About</a>
+      <a href="/#works">His works</a>
+      <a href="/#gallery">Gallery</a>
     </div>
+    <div class="nav-auth" id="nav-auth">
+      <a class="nav-link" href="/login">Log in</a>
+      <a class="btn small" href="/login">Join now</a>
+    </div>
+    <button class="nav-toggle" id="nav-toggle" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="nav-drawer">
+      <span></span><span></span><span></span>
+    </button>
   </div>
+  <div class="nav-drawer" id="nav-drawer" hidden></div>
 </nav>
 
-<main class="page">
+<main class="page" id="main">
   <div class="wrap">
-    <div class="boot" id="boot">Loading your account…</div>
+    <div class="skeleton" id="boot" aria-label="Loading your account"><div class="sk" style="height:340px"></div><div class="sk" style="height:420px"></div></div>
 
     <div id="content" hidden>
       <div class="welcome" id="welcome" hidden>
@@ -45,10 +55,6 @@
           <h2 id="name"></h2>
           <div class="email" id="email"></div>
           <div class="badge">Member since <span id="since"></span></div>
-          <div class="actions">
-            <button class="btn ghost" id="logout"><span class="spinner"></span><span>Log out</span></button>
-            <button class="btn danger" id="logout-all"><span class="spinner"></span><span>Log out of all devices</span></button>
-          </div>
         </aside>
 
         <div style="display:grid;gap:22px">
@@ -77,6 +83,10 @@
           <section class="card">
             <div class="card-head"><h2>Logged-in devices</h2></div>
             <div id="sessions"></div>
+            <div class="devices-foot">
+              <span>Lost a phone or used a shared computer?</span>
+              <button class="btn small danger" id="logout-all" type="button"><span class="spinner"></span><span>Log out of all devices</span></button>
+            </div>
           </section>
         </div>
       </div>
@@ -85,12 +95,13 @@
 </main>
 
 <script type="module">
-  import { $, api, setLoading, message, renderProfileFields, readProfileFields, checkProfile, showFieldErrors, prettyPhone } from '/app.js';
+  import { $, api, setLoading, message, renderProfileFields, readProfileFields, checkProfile, showFieldErrors, prettyPhone, mountNav, toast, logout } from '/app.js';
 
   const { ok, data } = await api('/api/me');
   if (!ok) { location.replace('/login'); await new Promise(() => {}); }
   const { data: opts } = await api('/api/options');
   let user = data.member;
+  mountNav({ member: user });
 
   const LABELS = [
     ['full_name', 'Full name'], ['email', 'Email'], ['phone', 'Phone'], ['gender', 'Gender'],
@@ -106,7 +117,7 @@
     $('#name').textContent = user.full_name || 'New member';
     $('#email').textContent = contact;
     $('#prompt').hidden = user.profileComplete;
-    $('#edit').textContent = user.profileComplete ? 'Edit' : 'Add details';
+    $('#edit').hidden = !user.profileComplete;   // new members use the 'Complete your profile' button instead
     $('#since').textContent = fmtDate(user.createdAt);
     const dl = $('#details'); dl.innerHTML = '';
     for (const [key, label] of LABELS) {
@@ -117,7 +128,7 @@
       if ((key === 'email' && user.emailVerified) || (key === 'phone' && user.phoneVerified)) val += '  ✓ verified';
       const wrap = document.createElement('div');
       const dt = document.createElement('dt'); dt.textContent = label;
-      const dd = document.createElement('dd'); dd.textContent = val || '—';
+      const dd = document.createElement('dd'); dd.textContent = val || 'Not added'; if (!val) dd.className = 'empty';
       wrap.append(dt, dd); dl.append(wrap);
     }
   }
@@ -167,6 +178,8 @@
   }
   $('#edit').addEventListener('click', openForm);
   $('#prompt-btn').addEventListener('click', openForm);
+  if (location.hash === '#edit') { history.replaceState(null, '', '/account'); openForm(); }
+  window.addEventListener('hashchange', () => { if (location.hash === '#edit') { history.replaceState(null, '', '/account'); openForm(); } });
   $('#cancel').addEventListener('click', () => { $('#edit-form').hidden = true; $('#view').hidden = false; $('#prompt').hidden = user.profileComplete; });
   $('#edit-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -181,19 +194,15 @@
       if (res.data.fields) showFieldErrors(fields, res.data.fields);
       return message($('#edit-err'), res.data.error || 'Something went wrong.');
     }
-    user = res.data.member; render();
+    user = res.data.member; render(); mountNav({ member: user });
     $('#edit-form').hidden = true; $('#view').hidden = false;
+    toast(first ? '✓ Profile saved. Welcome aboard!' : '✓ Details saved');
+    $('#view').scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 
-  // Log out
-  async function logout(path, btn) {
-    setLoading(btn, true);
-    await api(path, {});
-    location.href = '/login';
-  }
-  $('#logout').addEventListener('click', (e) => logout('/api/auth/logout', e.currentTarget));
+  // Log out of every device
   $('#logout-all').addEventListener('click', (e) => {
-    if (confirm('Log out of every device, including this one?')) logout('/api/auth/logout-all', e.currentTarget);
+    if (confirm('Log out of every device, including this one?')) { setLoading(e.currentTarget, true); logout(true); }
   });
 </script>
 </body>

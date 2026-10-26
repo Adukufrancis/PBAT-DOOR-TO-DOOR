@@ -14,19 +14,29 @@
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-<nav class="nav">
+<a class="skip" href="#main">Skip to content</a>
+<nav class="nav" id="site-nav">
   <div class="wrap">
     <a class="brand" href="/" aria-label="PBAT Door to Door home">
       <img class="brand-logo" src="/images/logo-transparent.png" alt="PBAT Door to Door Movement 2027" width="900" height="563">
     </a>
     <div class="nav-links">
-      <a href="/">Home</a>
-      <a class="hide-sm" href="/#works">His works</a>
+      <a href="/#about">About</a>
+      <a href="/#works">His works</a>
+      <a href="/#gallery">Gallery</a>
     </div>
+    <div class="nav-auth" id="nav-auth">
+      <a class="nav-link" href="/login">Log in</a>
+      <a class="btn small" href="/login">Join now</a>
+    </div>
+    <button class="nav-toggle" id="nav-toggle" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="nav-drawer">
+      <span></span><span></span><span></span>
+    </button>
   </div>
+  <div class="nav-drawer" id="nav-drawer" hidden></div>
 </nav>
 
-<main class="page">
+<main class="page" id="main">
   <div class="wrap">
     <div class="boot step active" id="s-boot">Loading…</div>
 
@@ -63,11 +73,12 @@
 </main>
 
 <script type="module">
-  import { $, api, setLoading, message, devCodeNote, showStep, createOtp, cooldown } from '/app.js';
+  import { $, api, setLoading, message, devCodeNote, showStep, createOtp, cooldown, mountNav } from '/app.js';
 
   let identifier = '';
   const me = await api('/api/me');
   if (me.ok) location.replace('/account');
+  mountNav({ member: null, page: 'login' });
 
   const { data: opts } = await api('/api/options');
   if (!opts.sms) {

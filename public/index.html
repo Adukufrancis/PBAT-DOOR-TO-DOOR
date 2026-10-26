@@ -20,23 +20,30 @@
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+<a class="skip" href="#main">Skip to content</a>
 
-<nav class="nav">
+<nav class="nav" id="site-nav">
   <div class="wrap">
     <a class="brand" href="/" aria-label="PBAT Door to Door home">
       <img class="brand-logo" src="/images/logo-transparent.png" alt="PBAT Door to Door Movement 2027" width="900" height="563">
     </a>
     <div class="nav-links">
-      <a class="hide-sm" href="#about">About</a>
-      <a class="hide-sm" href="#works">His works</a>
-      <a class="hide-sm" href="#gallery">Gallery</a>
-      <a href="/login" data-nav="login">Log in</a>
-      <a class="btn small" href="/join" data-nav="join">Join now</a>
+      <a href="/#about">About</a>
+      <a href="/#works">His works</a>
+      <a href="/#gallery">Gallery</a>
     </div>
+    <div class="nav-auth" id="nav-auth">
+      <a class="nav-link" href="/login">Log in</a>
+      <a class="btn small" href="/login">Join now</a>
+    </div>
+    <button class="nav-toggle" id="nav-toggle" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="nav-drawer">
+      <span></span><span></span><span></span>
+    </button>
   </div>
+  <div class="nav-drawer" id="nav-drawer" hidden></div>
 </nav>
 
-<header class="hero">
+<header class="hero" id="main">
   <div class="wrap">
     <div>
       <span class="eyebrow">Renewed Hope · 2027</span>
@@ -129,7 +136,7 @@
 </footer>
 
 <script type="module">
-  import { $, initNav, loadImages } from '/app.js';
+  import { $, $$, mountNav, loadImages } from '/app.js';
 
   // ---- His works: edit this list to add or update achievements ----
   const WORKS = [
@@ -197,7 +204,14 @@
   gal.querySelectorAll('figure').forEach((f) => new MutationObserver(() => {
     if (f.classList.contains('missing')) { f.remove(); if (!gal.querySelector('figure')) $('#gallery').hidden = true; else gal.dataset.count = gal.children.length; }
   }).observe(f, { attributes: true, attributeFilter: ['class'] }));
-  initNav();
+  const member = await mountNav();
+  if (member) {
+    // Signed in: send the "join" buttons to the account instead, and hide "I already have an account".
+    $$('[data-nav="join"]').forEach((a) => { a.href = '/account'; a.textContent = member.profileComplete ? 'Go to my account' : 'Complete my profile'; });
+    $$('[data-nav="login"]').forEach((a) => a.remove());
+    const band = $('.join-band h2'); if (band) band.textContent = member.full_name ? `Welcome back, ${member.full_name.split(' ')[0]}.` : 'Welcome to the movement.';
+    const bandP = $('.join-band p'); if (bandP) bandP.textContent = 'Keep your details up to date so we can connect you with volunteers in your ward and polling unit.';
+  }
 </script>
 </body>
 </html>

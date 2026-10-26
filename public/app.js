@@ -1,6 +1,7 @@
 // PBAT DOOR TO DOOR — shared browser code (used by every page)
 
 export const $ = (sel, root = document) => root.querySelector(sel);
+const escHtml = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 export async function api(path, body) {
@@ -38,15 +39,90 @@ export function devCodeNote(el, code) {
 
 export function showStep(id) { $$('.step').forEach((s) => s.classList.toggle('active', s.id === id)); }
 
-// Swap the nav's "Log in" for "My account" when signed in. Returns the user (or null).
-export async function initNav() {
-  const { ok, data } = await api('/api/me');
-  const user = ok ? data.member : null;
-  const login = $('[data-nav="login"]');
-  const join = $('[data-nav="join"]');
-  if (user && login) { login.textContent = 'My account'; login.href = '/account'; }
-  if (user && join) { join.textContent = 'My account'; join.href = '/account'; }
-  return ok ? data : null;
+// ---- Site header: one component on every page ---------------------------------
+// Logged out: "Log in" + "Join now". Logged in: one profile button with a menu.
+// Phones: a menu button opens a drawer with the same links and actions.
+const initials = (m) => (m.full_name || '').split(/\s+/).filter(Boolean).map((w) => w[0]).slice(0, 2).join('').toUpperCase()
+  || (m.email || m.phone || '?').replace(/^\+234/, '0')[0].toUpperCase();
+const firstName = (m) => (m.full_name || '').split(/\s+/)[0] || 'Account';
+const contactOf = (m) => (m.emailVerified ? m.email : prettyPhone(m.phone)) || m.email || prettyPhone(m.phone);
+
+export async function logout(all = false) {
+  await api(all ? '/api/auth/logout-all' : '/api/auth/logout', {});
+  location.href = '/';
+}
+
+/** Fill the header for this visitor. Pass the member if the page already loaded it. */
+export async function mountNav({ member, page } = {}) {
+  if (member === undefined) {
+    const { ok, data } = await api('/api/me');
+    member = ok ? data.member : null;
+  }
+  const nav = $('#site-nav'); if (!nav) return member;
+  const auth = $('#nav-auth'), drawer = $('#nav-drawer'), toggle = $('#nav-toggle');
+  const links = $$('.nav-links a', nav).map((a) => `<a href="${a.getAttribute('href')}">${a.textContent}</a>`).join('');
+
+  if (member) {
+    auth.innerHTML = `
+      <div class="user-menu">
+        <button class="user-btn" type="button" aria-haspopup="menu" aria-expanded="false">
+          <span class="user-avatar">${escHtml(initials(member))}</span>
+          <span class="user-name">${escHtml(firstName(member))}</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+        <div class="user-pop" role="menu" hidden>
+          <div class="user-head"><strong>${escHtml(member.full_name || 'New member')}</strong><span>${escHtml(contactOf(member))}</span></div>
+          <a role="menuitem" href="/account">My account</a>
+          <a role="menuitem" href="/account#edit">${member.profileComplete ? 'Edit my details' : 'Complete my profile'}</a>
+          <hr>
+          <button role="menuitem" type="button" data-logout>Log out</button>
+        </div>
+      </div>`;
+    drawer.innerHTML = `
+      <div class="drawer-user"><span class="user-avatar">${escHtml(initials(member))}</span>
+        <div><strong>${escHtml(member.full_name || 'New member')}</strong><span>${escHtml(contactOf(member))}</span></div></div>
+      <a href="/account">My account</a>${links}
+      <button type="button" class="drawer-logout" data-logout>Log out</button>`;
+    const btn = $('.user-btn', auth), pop = $('.user-pop', auth);
+    const setOpen = (open) => { pop.hidden = !open; btn.setAttribute('aria-expanded', String(open)); };
+    btn.addEventListener('click', (e) => { e.stopPropagation(); setOpen(pop.hidden); });
+    pop.addEventListener('click', (e) => { if (e.target.closest('a')) setOpen(false); });
+    if (!nav._menuWired) {
+      nav._menuWired = true;
+      document.addEventListener('click', (e) => { const p = $('.user-pop', nav); if (p && !auth.contains(e.target)) { p.hidden = true; $('.user-btn', nav)?.setAttribute('aria-expanded', 'false'); } });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { const p = $('.user-pop', nav); if (p) { p.hidden = true; $('.user-btn', nav)?.setAttribute('aria-expanded', 'false'); } } });
+    }
+  } else {
+    const onLogin = page === 'login';
+    auth.innerHTML = onLogin ? '' : `<a class="nav-link" href="/login">Log in</a><a class="btn small" href="/login">Join now</a>`;
+    drawer.innerHTML = `${links}${onLogin ? '' : '<a href="/login" class="btn block">Join or log in</a>'}`;
+  }
+  $$('[data-logout]', nav).forEach((b) => b.addEventListener('click', () => logout()));
+
+  if (nav._wired) return member;
+  nav._wired = true;
+  // phone menu
+  const setDrawer = (open) => {
+    drawer.hidden = !open; toggle.setAttribute('aria-expanded', String(open));
+    toggle.setAttribute('aria-label', open ? 'Close menu' : 'Open menu'); nav.classList.toggle('open', open);
+  };
+  toggle.addEventListener('click', () => setDrawer(drawer.hidden));
+  drawer.addEventListener('click', (e) => { if (e.target.closest('a')) setDrawer(false); });
+  window.addEventListener('resize', () => { if (window.innerWidth > 760) setDrawer(false); });
+
+  // shadow once the page scrolls
+  const onScroll = () => nav.classList.toggle('scrolled', window.scrollY > 8);
+  window.addEventListener('scroll', onScroll, { passive: true }); onScroll();
+  return member;
+}
+export const initNav = () => mountNav();
+
+// Small confirmation message at the bottom of the screen.
+export function toast(text) {
+  let t = $('#toast');
+  if (!t) { t = document.createElement('div'); t.id = 'toast'; t.setAttribute('role', 'status'); document.body.append(t); }
+  t.textContent = text; t.classList.add('show');
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 2600);
 }
 
 // Images: try each source in data-sources ("a|b|c"); show initials if all fail.
