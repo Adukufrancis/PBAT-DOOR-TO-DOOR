@@ -6,12 +6,13 @@ const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 export function startMotion() {
   document.documentElement.classList.add('motion');
   progressBar();
-  if (reduce) { document.querySelectorAll('.reveal').forEach((el) => el.classList.add('in')); return; }
+  if (reduce) { document.querySelectorAll('.timeline li').forEach((li) => li.classList.add('lit')); document.querySelector('.timeline')?.style.setProperty('--fill', '100%'); document.querySelectorAll('.reveal').forEach((el) => el.classList.add('in')); return; }
   reveal();
   typewriter();
   countUp();
   ticker();
   heroParallax();
+  timelineFill();
 }
 
 // Thin bar at the top showing how far down the page you are.
@@ -108,4 +109,17 @@ function heroParallax() {
   addEventListener('scroll', () => {
     if (scrollY < innerHeight) fig.style.transform = `translate3d(0, ${scrollY * 0.08}px, 0)`;
   }, { passive: true });
+}
+
+// About timeline: a gold line fills down the timeline as you scroll, lighting each milestone it passes.
+function timelineFill() {
+  const tl = document.querySelector('.timeline'); if (!tl) return;
+  const items = [...tl.querySelectorAll('li')];
+  const update = () => {
+    const r = tl.getBoundingClientRect(), mark = innerHeight * 0.62;
+    const p = Math.max(0, Math.min(1, (mark - r.top) / r.height));
+    tl.style.setProperty('--fill', `${p * 100}%`);
+    items.forEach((li) => li.classList.toggle('lit', li.getBoundingClientRect().top + 10 < mark));
+  };
+  addEventListener('scroll', update, { passive: true }); addEventListener('resize', update); update();
 }

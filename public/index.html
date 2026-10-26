@@ -83,19 +83,26 @@
   </div>
 </div>
 
-<section class="block" id="about">
+<section class="block about-sec" id="about">
   <div class="wrap about">
-    <div class="section-head reveal" style="margin:0">
-      <span class="eyebrow">About the President</span>
-      <h2>From Lagos to Aso Rock</h2>
-      <p>Bola Ahmed Tinubu served in the Senate, led Lagos State for two terms, and was sworn in as President at Eagle Square, Abuja, on 29 May 2023.</p>
+    <div class="about-intro">
+      <div class="section-head reveal" style="margin:0">
+        <span class="eyebrow">About the President</span>
+        <h2>From Lagos to Aso Rock</h2>
+        <p>Bola Ahmed Tinubu served in the Senate, led Lagos State for two terms, and was sworn in as President at Eagle Square, Abuja, on 29 May 2023.</p>
+      </div>
+      <div class="fact-chips">
+        <div class="fact reveal"><b>1992</b><span>Senator,<br>Lagos West</span></div>
+        <div class="fact reveal"><b>8 yrs</b><span>Governor of<br>Lagos State</span></div>
+        <div class="fact reveal"><b>16th</b><span>President of<br>Nigeria</span></div>
+      </div>
     </div>
-    <ol class="timeline">
-      <li class="reveal"><time>29 MARCH 1952</time><p>Born. This is the generally accepted date of birth.</p></li>
+    <ol class="timeline" id="timeline">
+      <li class="reveal"><time>29 March 1952</time><p>Born. This is the generally accepted date of birth.</p></li>
       <li class="reveal"><time>1992 – 1993</time><p>Senator representing Lagos West in the Third Republic, until the Senate was dissolved in 1993.</p></li>
       <li class="reveal"><time>1999 – 2007</time><p>Governor of Lagos State for two terms.</p></li>
-      <li class="reveal"><time>29 MAY 2023</time><p>Sworn in as the 16th President of Nigeria. On the same day he announced the end of the petrol subsidy.</p></li>
-      <li class="reveal"><time>24 OCTOBER 2026</time><p>Re-election campaign launched in Kaduna.</p></li>
+      <li class="reveal"><time>29 May 2023</time><p>Sworn in as the 16th President of Nigeria. On the same day he announced the end of the petrol subsidy.</p></li>
+      <li class="reveal"><time>24 October 2026</time><p>Re-election campaign launched in Kaduna.</p></li>
     </ol>
   </div>
 </section>
@@ -107,6 +114,7 @@
       <h2>What the administration has delivered</h2>
       <p>The key reforms and projects since May 2023. Every card links to its source, so you can share facts that hold up on the doorstep.</p>
     </div>
+    <div class="work-filters" id="work-filters" role="tablist" aria-label="Filter achievements"></div>
     <div class="works" id="works-grid"></div>
   </div>
 </section>
@@ -203,14 +211,39 @@
 
   const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+  // Icons + colours per category (simple line icons drawn for this site)
+  const CAT = {
+    'Economy':        { c: '#0a6b3d', i: '<path d="M4 19h16M6 16V9m4 7V6m4 10v-5m4 5V8"/>' },
+    'Education':      { c: '#2563eb', i: '<path d="M3 9l9-4 9 4-9 4-9-4z"/><path d="M7 11v4c0 1.5 2.2 3 5 3s5-1.5 5-3v-4"/>' },
+    'Workers':        { c: '#c2410c', i: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2M3 13h18"/>' },
+    'Tax reform':     { c: '#7c3aed', i: '<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/>' },
+    'Infrastructure': { c: '#b45309', i: '<path d="M8 3L4 21M16 3l4 18M12 5v3m0 4v3m0 4v2"/>' },
+    'Security':       { c: '#0f766e', i: '<path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>' },
+  };
+  const icon = (t) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${(CAT[t] || CAT.Economy).i}</svg>`;
   $('#works-grid').innerHTML = WORKS.map((w) => `
-    <article class="work reveal">
-      <span class="tag">${esc(w.tag)}</span>
+    <article class="work reveal" data-cat="${esc(w.tag)}" style="--cat:${(CAT[w.tag] || CAT.Economy).c}">
+      <div class="work-top"><span class="work-ico">${icon(w.tag)}</span><span class="tag">${esc(w.tag)}</span></div>
       <h3>${esc(w.title)}</h3>
       <div class="figure">${esc(w.figure)}</div>
       <p>${esc(w.text)}</p>
       <div class="meta"><span>Source</span><a href="${w.url}" target="_blank" rel="noopener">${esc(w.source)} ↗</a></div>
     </article>`).join('');
+
+  // Filter buttons: All + each category present
+  const cats = ['All', ...new Set(WORKS.map((w) => w.tag))];
+  $('#work-filters').innerHTML = cats.map((c, i) => `<button type="button" role="tab" aria-selected="${i === 0}" data-f="${esc(c)}">${esc(c)}${c === 'All' ? '' : ` <small>${WORKS.filter((w) => w.tag === c).length}</small>`}</button>`).join('');
+  $('#work-filters').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    $$('#work-filters button').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
+    const f = b.dataset.f;
+    $$('#works-grid .work').forEach((card) => {
+      const show = f === 'All' || card.dataset.cat === f;
+      card.classList.add('in');
+      if (show) { card.hidden = false; card.animate?.([{ opacity: 0, transform: 'scale(.96)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: 'ease-out' }); }
+      else card.hidden = true;
+    });
+  });
 
   $('#gallery-grid').innerHTML = PHOTOS.map((p, i) => `
     <figure class="ph reveal" data-initials="BAT">

@@ -42,22 +42,26 @@
     <div class="skeleton" id="boot" aria-label="Loading your account"><div class="sk" style="height:340px"></div><div class="sk" style="height:420px"></div></div>
 
     <div id="content" hidden>
-      <div class="welcome" id="welcome" hidden>
-        <strong>Welcome to PBAT DOOR TO DOOR!</strong> You're in. You'll stay logged in on this device until you log out.
-      </div>
-      <div class="profile-prompt" id="prompt" hidden>
-        <div><strong>Complete your profile</strong><span>Add your name, LGA and polling unit so we can connect you with volunteers near you.</span></div>
-        <button class="btn" id="prompt-btn" type="button">Add my details</button>
-      </div>
-
-      <div class="account">
-        <aside class="card member">
+      <section class="acc-hero">
+        <div class="acc-id">
           <div class="avatar" id="avatar"></div>
-          <h2 id="name"></h2>
-          <div class="email" id="email"></div>
-          <div class="badge">Member since <span id="since"></span></div>
-        </aside>
+          <div>
+            <p class="acc-greet" id="greet">Welcome back</p>
+            <h1 id="name"></h1>
+            <div class="acc-meta"><span id="email"></span><span class="dot">•</span><span>Member since <b id="since"></b></span></div>
+          </div>
+        </div>
+        <div class="acc-strength">
+          <div class="ring" id="ring" style="--p:0"><span id="ring-num">0%</span></div>
+          <div class="acc-strength-text">
+            <strong id="strength-title">Profile strength</strong>
+            <span id="strength-hint"></span>
+            <div id="prompt"><button class="btn gold small" id="prompt-btn" type="button">Complete my profile</button></div>
+          </div>
+        </div>
+      </section>
 
+      <div class="account account-v2">
         <div style="display:grid;gap:22px">
           <section class="card" id="view">
             <div class="card-head">
@@ -80,7 +84,8 @@
               <button class="btn ghost" id="cancel" type="button">Cancel</button>
             </div>
           </form>
-
+        </div>
+        <div style="display:grid;gap:22px;align-content:start">
           <section class="card">
             <div class="card-head"><h2>Logged-in devices</h2></div>
             <div id="sessions"></div>
@@ -117,7 +122,17 @@
     $('#avatar').textContent = user.full_name ? user.full_name.split(' ').map((w) => w[0]).slice(0, 2).join('') : (contact[0] || '?');
     $('#name').textContent = user.full_name || 'New member';
     $('#email').textContent = contact;
-    $('#prompt').hidden = user.profileComplete;
+    $('#greet').textContent = user.profileComplete ? 'Welcome back' : 'Welcome to the movement';
+    // profile strength: share of the useful details filled in
+    const checks = [['full_name','your name'],['state','your state'],['lga','your LGA'],['ward','your ward'],['polling_unit','your polling unit'],
+      ['phone','a phone number'],['email','an email'],['date_of_birth','your date of birth'],['gender','your gender'],['occupation','your occupation'],['interests','how you can help']];
+    const missing = checks.filter(([k]) => !(Array.isArray(user[k]) ? user[k].length : user[k]));
+    const pct = Math.round(((checks.length - missing.length) / checks.length) * 100);
+    $('#ring').style.setProperty('--p', pct); $('#ring-num').textContent = `${pct}%`;
+    $('#strength-title').textContent = pct === 100 ? 'Profile complete' : 'Profile strength';
+    $('#strength-hint').textContent = pct === 100 ? 'Thank you! Your details are all in.' : `Add ${missing.slice(0, 2).map(([, l]) => l).join(' and ')}${missing.length > 2 ? ` and ${missing.length - 2} more` : ''}.`;
+    $('#prompt-btn').textContent = user.profileComplete ? 'Add missing details' : 'Complete my profile';
+    $('#prompt').hidden = pct === 100;
     $('#edit').hidden = !user.profileComplete;   // new members use the 'Complete your profile' button instead
     $('#since').textContent = fmtDate(user.createdAt);
     const dl = $('#details'); dl.innerHTML = '';
@@ -160,7 +175,8 @@
 
   render(); renderSessions(data.sessions);
   if (new URLSearchParams(location.search).has('welcome')) {
-    $('#welcome').hidden = false; history.replaceState(null, '', '/account');
+    history.replaceState(null, '', '/account');
+    toast("✓ You're in. You'll stay logged in on this device until you log out.");
   }
   $('#boot').hidden = true; $('#content').hidden = false;
 
@@ -181,7 +197,7 @@
   $('#prompt-btn').addEventListener('click', openForm);
   if (location.hash === '#edit') { history.replaceState(null, '', '/account'); openForm(); }
   window.addEventListener('hashchange', () => { if (location.hash === '#edit') { history.replaceState(null, '', '/account'); openForm(); } });
-  $('#cancel').addEventListener('click', () => { $('#edit-form').hidden = true; $('#view').hidden = false; $('#prompt').hidden = user.profileComplete; });
+  $('#cancel').addEventListener('click', () => { $('#edit-form').hidden = true; $('#view').hidden = false; render(); });
   $('#edit-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const p = readProfileFields(fields);
