@@ -2,9 +2,16 @@
 
 A volunteer website with:
 - **Landing page** (`/`): the President's photos, a short bio timeline, and his administration's works, each linked to its source.
-- **Join** (`/join`): full sign-up form (name, email, phone, gender, date of birth, state, LGA, ward, polling unit, address, occupation, areas to help, consent). A 6-digit code is emailed to confirm the address before the account is created.
-- **Log in** (`/login`): enter your email, get a code, and you're in. No passwords.
-- **My account** (`/account`): view and edit your details, see your logged-in devices, log out. You stay logged in until you log out yourself.
+- **Join or log in** (`/login`, `/join`): one box. Type an email **or** Nigerian phone number, get a 6-digit code by email or SMS, and you're in. The first time creates the account.
+- **Welcome** (`/welcome`): shown once after the first login. Full name, phone or email (whichever they didn't sign in with), gender, date of birth, state, LGA, ward, polling unit, address, occupation, ways to help, consent.
+- **My account** (`/account`): view and edit details, see logged-in devices, log out. People stay logged in until they log out.
+
+### Sign-in by phone (SMS)
+Texting codes costs money with every provider (roughly ₦5–₦25 per text). The app supports:
+- **Termii** (Nigerian): set `TERMII_API_KEY` and `TERMII_SENDER_ID` (request a Sender ID in the Termii dashboard under *Sender IDs*). Uses the `dnd` channel by default so codes reach numbers on Do-Not-Disturb.
+- **Twilio**: set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`.
+
+Without an SMS provider, the site runs email-only and the sign-in box says phone sign-in is coming soon. Each connection can request at most 10 codes per hour, to protect SMS credit.
 
 ## Editing the content
 - **His works:** edit the `WORKS` list near the bottom of `public/index.html`.
@@ -70,10 +77,9 @@ After it deploys, open the `onrender.com` URL and sign in. The logs show `db: po
 
 | Step | Endpoint | What happens |
 |---|---|---|
-| Join | `POST /api/auth/signup` | Validates the form, holds the details, and emails a 6-digit code (only its hash is stored, valid 10 minutes). |
-| Log in | `POST /api/auth/request-code` | Emails a code to an existing member (or resends during sign-up). |
-| Both | `POST /api/auth/verify-code` | Checks the code, deletes it so it can't be reused, creates the account if signing up, and starts a session. |
-| — | `POST /api/me` | Updates your details. |
+| 1 | `POST /api/auth/start` | Takes an email or phone, sends a 6-digit code by email or SMS (only its hash is stored, valid 10 minutes). |
+| 2 | `POST /api/auth/verify` | Checks the code, deletes it so it can't be reused, creates the member the first time, and starts a session. |
+| — | `POST /api/me` | Saves the welcome questions / later edits. The contact used to sign in is verified and locked. |
 | — | `GET /api/options` | States, genders, and help areas for the form. |
 | — | `GET /api/me` | Returns the signed-in user and their signed-in devices. |
 | — | `POST /api/auth/logout` | Ends this device's session. |
@@ -97,12 +103,14 @@ The app uses the first provider that's configured: `BREVO_API_KEY` → `RESEND_A
 ## Files
 ```
 server.js          Express routes, sessions, cookies
-validate.js        Sign-up form rules (phone, age 18+, states…)
+validate.js        Form rules (email/phone parsing, age 18+, states…)
+sms.js             SMS sending: Termii / Twilio / console
+start.js           Lets Render's default `node start` run the server
 store.js           Database layer: Postgres if DATABASE_URL is set, otherwise SQLite
 mailer.js          Email sending: Brevo / Resend / SMTP / console
 public/index.html  Landing page (photos, bio, works)
-public/join.html   Sign-up
-public/login.html  Log in
+public/login.html  Join or log in (email or phone)
+public/welcome.html  Questions after the first login
 public/account.html  Member area
 public/app.js, styles.css  Shared code and styles
 public/images/     Your own photos (optional)

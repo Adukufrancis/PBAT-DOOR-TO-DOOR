@@ -34,6 +34,19 @@ function ageOn(dobStr, now = new Date()) {
   return age;
 }
 
+export const isEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e) && e.length <= 254;
+
+/** Works out whether the sign-in box holds an email or a Nigerian phone number. */
+export function parseIdentifier(raw) {
+  const s = String(raw || '').trim();
+  if (s.includes('@')) {
+    const email = s.toLowerCase();
+    return isEmail(email) ? { type: 'email', value: email } : null;
+  }
+  const phone = normalizePhone(s);
+  return phone ? { type: 'phone', value: phone } : null;
+}
+
 /** Returns { profile } on success or { errors: {field: message} } on failure. */
 export function validateProfile(input, { requireConsent = true } = {}) {
   const errors = {};
@@ -43,10 +56,6 @@ export function validateProfile(input, { requireConsent = true } = {}) {
   if (p.full_name.split(' ').filter(Boolean).length < 2 || p.full_name.length < 4) {
     errors.full_name = 'Enter your first and last name.';
   }
-
-  const phone = normalizePhone(input.phone);
-  if (!phone) errors.phone = 'Enter a valid Nigerian phone number, e.g. 0803 123 4567.';
-  p.phone = phone || '';
 
   p.gender = clean(input.gender, 30);
   if (p.gender && !GENDERS.includes(p.gender)) errors.gender = 'Choose an option.';

@@ -75,12 +75,13 @@
 </main>
 
 <script type="module">
-  import { $, api, setLoading, message, renderProfileFields, readProfileFields, checkProfile, showFieldErrors } from '/app.js';
+  import { $, api, setLoading, message, renderProfileFields, readProfileFields, checkProfile, showFieldErrors, prettyPhone } from '/app.js';
 
   const { ok, data } = await api('/api/me');
   if (!ok) { location.replace('/login'); await new Promise(() => {}); }
+  if (!data.member.profileComplete) { location.replace('/welcome'); await new Promise(() => {}); }
   const { data: opts } = await api('/api/options');
-  let user = data.user;
+  let user = data.member;
 
   const LABELS = [
     ['full_name', 'Full name'], ['email', 'Email'], ['phone', 'Phone'], ['gender', 'Gender'],
@@ -93,13 +94,15 @@
   function render() {
     $('#avatar').textContent = user.full_name.split(' ').map((w) => w[0]).slice(0, 2).join('');
     $('#name').textContent = user.full_name;
-    $('#email').textContent = user.email;
+    $('#email').textContent = user.emailVerified ? user.email : prettyPhone(user.phone) || user.email;
     $('#since').textContent = fmtDate(user.createdAt);
     const dl = $('#details'); dl.innerHTML = '';
     for (const [key, label] of LABELS) {
       let val = user[key];
       if (key === 'interests') val = val.join(', ');
       if (key === 'date_of_birth') val = fmtDob(val);
+      if (key === 'phone') val = prettyPhone(val);
+      if ((key === 'email' && user.emailVerified) || (key === 'phone' && user.phoneVerified)) val += '  ✓ verified';
       const wrap = document.createElement('div');
       const dt = document.createElement('dt'); dt.textContent = label;
       const dd = document.createElement('dd'); dd.textContent = val || '—';
@@ -140,7 +143,7 @@
   // Edit details
   const fields = $('#fields');
   $('#edit').addEventListener('click', () => {
-    renderProfileFields(fields, opts, user, { withEmail: true, emailReadonly: true });
+    renderProfileFields(fields, opts, user);
     message($('#edit-err'), '');
     $('#view').hidden = true; $('#edit-form').hidden = false; $('#f-full_name').focus();
   });
@@ -148,7 +151,7 @@
   $('#edit-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const p = readProfileFields(fields);
-    if (!showFieldErrors(fields, checkProfile(p))) return message($('#edit-err'), 'Please fix the highlighted fields.');
+    if (!showFieldErrors(fields, checkProfile(p, user))) return message($('#edit-err'), 'Please fix the highlighted fields.');
     const btn = $('#save'); setLoading(btn, true);
     const res = await api('/api/me', p);
     setLoading(btn, false);
@@ -156,7 +159,7 @@
       if (res.data.fields) showFieldErrors(fields, res.data.fields);
       return message($('#edit-err'), res.data.error || 'Something went wrong.');
     }
-    user = res.data.user; render();
+    user = res.data.member; render();
     $('#edit-form').hidden = true; $('#view').hidden = false;
   });
 

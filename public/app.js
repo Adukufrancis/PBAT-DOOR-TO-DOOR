@@ -41,7 +41,7 @@ export function showStep(id) { $$('.step').forEach((s) => s.classList.toggle('ac
 // Swap the nav's "Log in" for "My account" when signed in. Returns the user (or null).
 export async function initNav() {
   const { ok, data } = await api('/api/me');
-  const user = ok ? data.user : null;
+  const user = ok ? data.member : null;
   const login = $('[data-nav="login"]');
   const join = $('[data-nav="join"]');
   if (user && login) { login.textContent = 'My account'; login.href = '/account'; }
@@ -117,6 +117,9 @@ export function cooldown(btn, seconds, label = 'Resend code') {
   tick(); btn._timer = setInterval(tick, 1000);
 }
 
+// +2348031234567 -> 0803 123 4567
+export const prettyPhone = (p) => { const m = /^\+234(\d{3})(\d{3})(\d{4})$/.exec(p || ''); return m ? `0${m[1]} ${m[2]} ${m[3]}` : (p || ''); };
+
 // ---- Profile form (used by Join and by Edit details) ---------------------------
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -139,14 +142,15 @@ function autoFormatDob(input) {
   });
 }
 
-export function renderProfileFields(container, opts, v = {}, { withEmail = true, emailReadonly = false } = {}) {
-  const field = (name, label, input, { full = false, optional = false } = {}) => `
+// `v` is the member (or {}); the contact they signed in with is verified and shown locked.
+export function renderProfileFields(container, opts, v = {}) {
+  const field = (name, label, input, { full = false, optional = false, verified = false } = {}) => `
     <div class="field${full ? ' full' : ''}" data-field="${name}">
-      <label for="f-${name}">${label}${optional ? ' <span class="opt">(optional)</span>' : ''}</label>
+      <label for="f-${name}">${label}${optional ? ' <span class="opt">(optional)</span>' : ''}${verified ? ' <span class="verified">✓ Verified</span>' : ''}</label>
       ${input}
       <div class="err"></div>
     </div>`;
-  const text = (name, attrs = '') => `<input id="f-${name}" name="${name}" value="${esc(v[name])}" ${attrs}>`;
+  const text = (name, attrs = '') => `<input id="f-${name}" name="${name}" value="${esc(name === 'phone' ? prettyPhone(v.phone) : v[name])}" ${attrs}>`;
   const select = (name, list, placeholder) => `
     <select id="f-${name}" name="${name}">
       <option value="">${placeholder}</option>
@@ -159,8 +163,8 @@ export function renderProfileFields(container, opts, v = {}, { withEmail = true,
       <legend>Your details</legend>
       <div class="grid">
         ${field('full_name', 'Full name', text('full_name', 'autocomplete="name" placeholder="e.g. Amina Bello"'), { full: true })}
-        ${withEmail ? field('email', 'Email address', text('email', `type="email" autocomplete="email" inputmode="email" placeholder="you@example.com"${emailReadonly ? ' readonly' : ''}`)) : ''}
-        ${field('phone', 'Phone number', text('phone', 'type="tel" autocomplete="tel" inputmode="tel" placeholder="0803 123 4567"'), { full: !withEmail })}
+        ${field('phone', 'Phone number', text('phone', `type="tel" autocomplete="tel" inputmode="tel" placeholder="0803 123 4567"${v.phoneVerified ? ' readonly' : ''}`), { verified: v.phoneVerified })}
+        ${field('email', 'Email address', text('email', `type="email" autocomplete="email" inputmode="email" placeholder="you@example.com"${v.emailVerified ? ' readonly' : ''}`), { optional: !v.emailVerified, verified: v.emailVerified })}
         ${field('gender', 'Gender', select('gender', opts.genders, 'Select…'), { optional: true })}
         ${field('date_of_birth', 'Date of birth', `<input id="f-date_of_birth" name="date_of_birth" inputmode="numeric" autocomplete="bday" placeholder="DD / MM / YYYY" maxlength="10" value="${esc(isoToDmy(v.date_of_birth))}">`)}
       </div>
@@ -187,7 +191,6 @@ export function renderProfileFields(container, opts, v = {}, { withEmail = true,
         </div>
       </div>
     </fieldset>`;
-  if (withEmail && v.email) $('#f-email', container).value = v.email;
   autoFormatDob($('#f-date_of_birth', container));
   enhanceSelects(container);
 }
@@ -204,12 +207,12 @@ export function readProfileFields(container) {
 }
 
 // Mirrors the server's rules so people get instant feedback.
-export function checkProfile(p, { withEmail = true } = {}) {
+export function checkProfile(p, v = {}) {
   const e = {};
   if (p.full_name.trim().split(/\s+/).filter(Boolean).length < 2) e.full_name = 'Enter your first and last name.';
-  if (withEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(p.email.trim())) e.email = 'Enter a valid email address.';
+  if (!v.emailVerified && p.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(p.email.trim())) e.email = 'Enter a valid email address, or leave it blank.';
   const digits = p.phone.replace(/[^\d+]/g, '');
-  if (!/^(\+?234|0)[789]\d{9}$/.test(digits)) e.phone = 'Enter a valid Nigerian phone number, e.g. 0803 123 4567.';
+  if (!v.phoneVerified && !/^(\+?234|0)[789]\d{9}$/.test(digits)) e.phone = 'Enter a valid Nigerian phone number, e.g. 0803 123 4567.';
   if (!p.date_of_birth) e.date_of_birth = 'Enter your date of birth.';
   else if (p.date_of_birth === 'invalid') e.date_of_birth = 'Enter a real date as DD/MM/YYYY, e.g. 28/11/2000.';
   else {

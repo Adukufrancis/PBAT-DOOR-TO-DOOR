@@ -26,6 +26,11 @@ services:
         sync: false
       - key: GMAIL_SCRIPT_SECRET
         sync: false
+      # SMS (optional, paid per text): Termii (Nigeria) or Twilio. Without one, sign-in by phone is off.
+      - key: TERMII_API_KEY
+        sync: false
+      - key: TERMII_SENDER_ID
+        sync: false
       # The sender you verified in Brevo, e.g.  PBAT DOOR TO DOOR <you@gmail.com>
       - key: MAIL_FROM
         sync: false
