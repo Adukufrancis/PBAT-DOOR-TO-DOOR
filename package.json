@@ -1,0 +1,21 @@
+{
+  "name": "pbat-door-to-door",
+  "version": "1.0.0",
+  "description": "PBAT DOOR TO DOOR volunteer website with email-code sign-up and login.",
+  "main": "server.js",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "nodemailer": "^6.9.16",
+    "pg": "^8.23.1"
+  }
+}

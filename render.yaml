@@ -1,0 +1,26 @@
+# Render Blueprint: Dashboard -> New -> Blueprint -> pick this repo.
+# Render will ask you for the values marked `sync: false`.
+services:
+  - type: web
+    name: pbat-door-to-door
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: APP_NAME
+        value: PBAT DOOR TO DOOR
+      # Postgres connection string (e.g. from Neon, Supabase or Render Postgres).
+      - key: DATABASE_URL
+        sync: false
+      # Brevo API key (works on Render's free plan; SMTP does not).
+      - key: BREVO_API_KEY
+        sync: false
+      # The sender you verified in Brevo, e.g.  PBAT DOOR TO DOOR <you@gmail.com>
+      - key: MAIL_FROM
+        sync: false
