@@ -4,9 +4,9 @@
 export const SOCIAL_LINKS = {
   facebook: '',    // e.g. 'https://facebook.com/pbatdoortodoor'
   x: '',           // e.g. 'https://x.com/pbatdoortodoor'
-  instagram: '',   // e.g. 'https://instagram.com/pbatdoortodoor'
-  tiktok: '',      // e.g. 'https://tiktok.com/@pbatdoortodoor'
-  youtube: '',     // e.g. 'https://youtube.com/@pbatdoortodoor'
+  instagram: '',   // e.g. 'https://www.instagram.com/pbatdoortodoor2027/'
+  tiktok: '',      // e.g. 'https://www.tiktok.com/@pbatdoortodoor2027'
+  youtube: '',     // e.g. 'https://www.youtube.com/@PbatDoorToDoor2027'
   whatsapp: '',    // e.g. a WhatsApp channel or group link: 'https://whatsapp.com/channel/…'
 };
 
