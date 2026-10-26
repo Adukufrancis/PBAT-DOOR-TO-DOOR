@@ -10,7 +10,9 @@ export function createSms(env = process.env) {
   const text = (code) => `${code} is your ${appName} code. It expires in 10 minutes. Don't share it with anyone.`;
 
   if (env.TERMII_API_KEY && env.TERMII_SENDER_ID) {
-    const base = (env.TERMII_BASE_URL || 'https://api.ng.termii.com').replace(/\/+$/, '');
+    // Each Termii account has its own base URL (shown on the Termii dashboard), e.g. https://v3.api.termii.com
+    let base = (env.TERMII_BASE_URL || 'https://api.ng.termii.com').trim().replace(/\/+$/, '').replace(/\/api$/, '');
+    if (!/^https?:\/\//.test(base)) base = `https://${base}`;
     return {
       provider: 'termii',
       async send(phone, code) {
@@ -29,6 +31,8 @@ export function createSms(env = process.env) {
         });
         const body = await res.text().catch(() => '');
         if (!res.ok) throw new Error(`Termii ${res.status}: ${body}`.slice(0, 400));
+        // Termii sometimes answers 200 with an error message instead of a message_id
+        if (!/message_id|Successfully/i.test(body)) throw new Error(`Termii: ${body}`.slice(0, 400));
       },
     };
   }
