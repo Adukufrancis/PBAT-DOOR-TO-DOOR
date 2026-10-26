@@ -1,12 +1,13 @@
 // PBAT DOOR TO DOOR: social media links.
-// ➜ Paste each link between the quotes. Leave it empty ('') until you have it:
+// ➜ Paste each link INSIDE the quotes, e.g.  instagram: 'https://instagram.com/yourpage',
+//   (text after // is only a note and is ignored by the website.) Leave it empty ('') until you have it:
 //   empty links still show the icon, marked "coming soon".
 export const SOCIAL_LINKS = {
   facebook: '',    // e.g. 'https://facebook.com/pbatdoortodoor'
   x: '',           // e.g. 'https://x.com/pbatdoortodoor'
-  instagram: '',   // e.g. 'https://www.instagram.com/pbatdoortodoor2027/'
-  tiktok: '',      // e.g. 'https://www.tiktok.com/@pbatdoortodoor2027'
-  youtube: '',     // e.g. 'https://www.youtube.com/@PbatDoorToDoor2027'
+  instagram: 'https://www.instagram.com/pbatdoortodoor2027/',
+  tiktok: 'https://www.tiktok.com/@pbatdoortodoor2027',
+  youtube: 'https://www.youtube.com/@PbatDoorToDoor2027',
   whatsapp: '',    // e.g. a WhatsApp channel or group link: 'https://whatsapp.com/channel/…'
 };
 
