@@ -21,6 +21,7 @@
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
+<div class="progress" aria-hidden="true"></div>
 
 <nav class="nav" id="site-nav">
   <div class="wrap">
@@ -48,7 +49,7 @@
   <div class="wrap">
     <div>
       <span class="eyebrow">Renewed Hope · 2027</span>
-      <h1>Taking the record <em>door to door.</em></h1>
+      <h1>Taking the record <em data-type-words="door to door.|ward to ward.|street to street.|unit to unit.">door to door.</em></h1>
       <p class="lead">Join a nationwide network of volunteers sharing the work of President Bola Ahmed Tinubu's administration with neighbours in every ward and polling unit across Nigeria.</p>
       <div class="cta">
         <a class="btn gold" href="/join" data-nav="join">Join the movement</a>
@@ -69,33 +70,39 @@
 
 <div class="stats">
   <div class="wrap">
-    <div class="stat"><b>1.38M</b><span>students funded through NELFUND student loans</span></div>
-    <div class="stat"><b>₦70,000</b><span>national minimum wage, up from ₦30,000</span></div>
-    <div class="stat"><b>750 km</b><span>Lagos–Calabar Coastal Highway across 9 states</span></div>
-    <div class="stat"><b>4</b><span>new tax laws in force since January 2026</span></div>
+    <div class="stat reveal"><b data-count="1.38" data-decimals="2" data-suffix="M">1.38M</b><span>students funded through NELFUND student loans</span></div>
+    <div class="stat reveal"><b data-count="70000" data-prefix="₦">₦70,000</b><span>national minimum wage, up from ₦30,000</span></div>
+    <div class="stat reveal"><b data-count="750" data-suffix=" km">750 km</b><span>Lagos–Calabar Coastal Highway across 9 states</span></div>
+    <div class="stat reveal"><b data-count="4">4</b><span>new tax laws in force since January 2026</span></div>
+  </div>
+</div>
+
+<div class="ticker" aria-hidden="true">
+  <div class="ticker-track">
+    <span>Renewed Hope</span><i>★</i><span>Door to Door</span><i>★</i><span>Ward to Ward</span><i>★</i><span>PBAT 2027</span><i>★</i><span>Every Polling Unit Counts</span><i>★</i><span>Join the Movement</span><i>★</i>
   </div>
 </div>
 
 <section class="block" id="about">
   <div class="wrap about">
-    <div class="section-head" style="margin:0">
+    <div class="section-head reveal" style="margin:0">
       <span class="eyebrow">About the President</span>
       <h2>From Lagos to Aso Rock</h2>
       <p>Bola Ahmed Tinubu served in the Senate, led Lagos State for two terms, and was sworn in as President at Eagle Square, Abuja, on 29 May 2023.</p>
     </div>
     <ol class="timeline">
-      <li><time>29 MARCH 1952</time><p>Born. This is the generally accepted date of birth.</p></li>
-      <li><time>1992 – 1993</time><p>Senator representing Lagos West in the Third Republic, until the Senate was dissolved in 1993.</p></li>
-      <li><time>1999 – 2007</time><p>Governor of Lagos State for two terms.</p></li>
-      <li><time>29 MAY 2023</time><p>Sworn in as the 16th President of Nigeria. On the same day he announced the end of the petrol subsidy.</p></li>
-      <li><time>24 OCTOBER 2026</time><p>Re-election campaign launched in Kaduna.</p></li>
+      <li class="reveal"><time>29 MARCH 1952</time><p>Born. This is the generally accepted date of birth.</p></li>
+      <li class="reveal"><time>1992 – 1993</time><p>Senator representing Lagos West in the Third Republic, until the Senate was dissolved in 1993.</p></li>
+      <li class="reveal"><time>1999 – 2007</time><p>Governor of Lagos State for two terms.</p></li>
+      <li class="reveal"><time>29 MAY 2023</time><p>Sworn in as the 16th President of Nigeria. On the same day he announced the end of the petrol subsidy.</p></li>
+      <li class="reveal"><time>24 OCTOBER 2026</time><p>Re-election campaign launched in Kaduna.</p></li>
     </ol>
   </div>
 </section>
 
 <section class="block" id="works" style="background:#fff;border-block:1px solid var(--line)">
   <div class="wrap">
-    <div class="section-head">
+    <div class="section-head reveal">
       <span class="eyebrow">His works</span>
       <h2>What the administration has delivered</h2>
       <p>The key reforms and projects since May 2023. Every card links to its source, so you can share facts that hold up on the doorstep.</p>
@@ -106,7 +113,7 @@
 
 <section class="block" id="gallery">
   <div class="wrap">
-    <div class="section-head">
+    <div class="section-head reveal">
       <span class="eyebrow">Gallery</span>
       <h2>The President in pictures</h2>
     </div>
@@ -114,9 +121,20 @@
   </div>
 </section>
 
+<section class="block social" id="social">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">Follow the movement</span>
+      <h2>Join the conversation online</h2>
+      <p>Get updates, share the record and connect with volunteers near you.</p>
+    </div>
+    <div class="social-grid" data-social="cards"></div>
+  </div>
+</section>
+
 <section class="block" style="padding-top:0">
   <div class="wrap">
-    <div class="join-band">
+    <div class="join-band reveal">
       <div>
         <h2>Your street. Your ward. Your voice.</h2>
         <p>Sign up in two minutes. We'll connect you with volunteers in your state and LGA for door-to-door outreach, mobilisation and polling-unit support.</p>
@@ -131,6 +149,7 @@
 
 <footer class="site">
   <div class="wrap">
+    <div class="foot-social" data-social="icons"></div>
     <span class="foot-brand"><img src="/images/icon-192.png" alt="" width="28" height="28"> © <span id="year"></span> PBAT DOOR TO DOOR Movement</span>
     <span><a href="/login">Join or log in</a></span>
   </div>
@@ -138,6 +157,8 @@
 
 <script type="module">
   import { $, $$, mountNav, loadImages } from '/app.js';
+  import { startMotion } from '/motion.js';
+  import { renderSocial } from '/social.js';
 
   // ---- His works: edit this list to add or update achievements ----
   const WORKS = [
@@ -183,7 +204,7 @@
   const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   $('#works-grid').innerHTML = WORKS.map((w) => `
-    <article class="work">
+    <article class="work reveal">
       <span class="tag">${esc(w.tag)}</span>
       <h3>${esc(w.title)}</h3>
       <div class="figure">${esc(w.figure)}</div>
@@ -192,7 +213,7 @@
     </article>`).join('');
 
   $('#gallery-grid').innerHTML = PHOTOS.map((p, i) => `
-    <figure class="ph" data-initials="BAT">
+    <figure class="ph reveal" data-initials="BAT">
       <img loading="lazy" alt="${esc(p.caption)}"
            data-sources="/images/gallery-${i + 1}.jpg|${COMMONS}Special:FilePath/${encodeURIComponent(p.file)}?width=${i === 0 ? 900 : 600}">
       <figcaption>${esc(p.caption)}<br><a href="${COMMONS}File:${encodeURIComponent(p.file)}" target="_blank" rel="noopener">Photo: Wikimedia Commons</a></figcaption>
@@ -200,6 +221,8 @@
 
   $('#year').textContent = new Date().getFullYear();
   loadImages();
+  renderSocial();
+  startMotion();
   // Gallery: remove any photo that can't load, and hide the section if none do.
   const gal = $('#gallery-grid');
   gal.querySelectorAll('figure').forEach((f) => new MutationObserver(() => {
