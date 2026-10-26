@@ -1,8 +1,9 @@
 // Sends the sign-in code. Picks the first provider that is configured:
 //   1. Brevo HTTP API  (BREVO_API_KEY)  — works on Render's free tier, no domain needed
 //   2. Resend HTTP API (RESEND_API_KEY) — works on Render's free tier, needs a verified domain
-//   3. SMTP            (SMTP_HOST)      — blocked on Render's free tier; fine on paid instances
-//   4. none            — development only: the code is printed to the console
+//   3. Gmail via Google Apps Script (GMAIL_SCRIPT_URL + GMAIL_SCRIPT_SECRET) — free, ~100/day, see apps-script/Code.gs
+//   4. SMTP            (SMTP_HOST)      — blocked on Render's free tier; fine on paid instances
+//   5. none            — development only: the code is printed to the console
 import nodemailer from 'nodemailer';
 
 function parseFrom(value) {
@@ -61,6 +62,25 @@ export function createMailer(env = process.env) {
           from: from.name ? `${from.name} <${from.email}>` : from.email,
           to: [to], subject: m.subject, text: m.text, html: m.html,
         });
+      },
+    };
+  }
+
+  if (env.GMAIL_SCRIPT_URL) {
+    return {
+      provider: 'gmail-script',
+      send: async (to, code) => {
+        const m = render(appName, code);
+        const res = await fetch(env.GMAIL_SCRIPT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ secret: env.GMAIL_SCRIPT_SECRET, to, subject: m.subject, text: m.text, html: m.html, fromName: from.name || appName }),
+          redirect: 'follow',
+          signal: AbortSignal.timeout(20000),
+        });
+        let out = {};
+        try { out = await res.json(); } catch {}
+        if (!res.ok || !out.ok) throw new Error(`Gmail script failed: ${res.status} ${out.error || ''}`.trim());
       },
     };
   }

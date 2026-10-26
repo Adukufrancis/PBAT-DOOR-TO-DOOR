@@ -36,7 +36,11 @@ Use any Postgres provider and copy its connection string (`postgres://…`). Two
 
 The tables are created automatically on first start.
 
-### 2. Set up Brevo for email
+### 2. Set up email (pick one, both free)
+
+**Option A: your own Gmail (simplest, about 100 emails/day).** Follow the steps at the top of `apps-script/Code.gs`, then set `GMAIL_SCRIPT_URL` and `GMAIL_SCRIPT_SECRET` on Render. You don't need `MAIL_FROM`.
+
+**Option B: Brevo (300 emails/day, free plan, no card).**
 1. Create a free account at brevo.com. The free plan allows 300 emails per day.
 2. Go to **Senders, Domains & Dedicated IPs** → **Senders** → add and verify the email address you'll send from (a Gmail address works).
 3. Go to **SMTP & API** → **API Keys** → create a key (it starts with `xkeysib-`).
@@ -88,7 +92,7 @@ After it deploys, open the `onrender.com` URL and sign in. The logs show `db: po
 - In production, codes are never shown on the page.
 
 ### Email providers
-The app uses the first provider that's configured: `BREVO_API_KEY` → `RESEND_API_KEY` (needs your own domain) → `SMTP_HOST` (only works on paid Render plans or other hosts) → console output (development only).
+The app uses the first provider that's configured: `BREVO_API_KEY` → `RESEND_API_KEY` → `GMAIL_SCRIPT_URL` (needs your own domain) → `SMTP_HOST` (only works on paid Render plans or other hosts) → console output (development only).
 
 ## Files
 ```

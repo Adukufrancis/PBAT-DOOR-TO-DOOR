@@ -18,8 +18,13 @@ services:
       # Postgres connection string (e.g. from Neon, Supabase or Render Postgres).
       - key: DATABASE_URL
         sync: false
-      # Brevo API key (works on Render's free plan; SMTP does not).
+      # Email: set EITHER Brevo (BREVO_API_KEY) OR the free Gmail script
+      # (GMAIL_SCRIPT_URL + GMAIL_SCRIPT_SECRET, see apps-script/Code.gs). Leave the others empty.
       - key: BREVO_API_KEY
+        sync: false
+      - key: GMAIL_SCRIPT_URL
+        sync: false
+      - key: GMAIL_SCRIPT_SECRET
         sync: false
       # The sender you verified in Brevo, e.g.  PBAT DOOR TO DOOR <you@gmail.com>
       - key: MAIL_FROM

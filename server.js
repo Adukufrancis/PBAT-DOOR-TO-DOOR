@@ -29,7 +29,7 @@ if (IS_PROD && store.kind !== 'postgres') {
     '(like Render free), every restart will sign everyone out. Set DATABASE_URL to a Postgres database.');
 }
 if (IS_PROD && !mailer.provider) {
-  console.warn('WARNING: no email provider configured (BREVO_API_KEY, RESEND_API_KEY or SMTP_HOST). ' +
+  console.warn('WARNING: no email provider configured (BREVO_API_KEY, GMAIL_SCRIPT_URL, RESEND_API_KEY or SMTP_HOST). ' +
     'Nobody will be able to receive sign-in codes.');
 }
 
