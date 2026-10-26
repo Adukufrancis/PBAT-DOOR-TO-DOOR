@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import express from 'express';
 import cookieParser from 'cookie-parser';
+import compression from 'compression';
+import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -77,6 +79,7 @@ setInterval(() => {
 const app = express();
 app.set('trust proxy', 1);                   // Render (and most hosts) sit behind a proxy
 app.disable('x-powered-by');
+app.use(compression());
 app.use(express.json({ limit: '20kb' }));
 app.use(cookieParser());
 
@@ -233,8 +236,9 @@ app.post('/api/me', h(async (req, res) => {
 
   let phone = null, email = null;
   if (!m.phone_verified) {
-    phone = normalizePhone(req.body.phone);
-    if (!phone) errors.phone = 'Enter a valid Nigerian phone number, e.g. 0803 123 4567.';
+    const raw = String(req.body.phone || '').trim();
+    phone = raw ? normalizePhone(raw) : null;
+    if (raw && !phone) errors.phone = 'Enter a valid Nigerian phone number (e.g. 0803 123 4567), or leave it blank.';
   }
   if (!m.email_verified) {
     const raw = String(req.body.email || '').trim().toLowerCase();
@@ -243,8 +247,11 @@ app.post('/api/me', h(async (req, res) => {
   }
   if (Object.keys(errors).length) return res.status(400).json({ error: 'Please fix the highlighted fields.', fields: errors });
 
-  if (phone && phone !== m.phone && !(await store.setContact(m.id, 'phone', phone))) {
-    return res.status(409).json({ error: 'Please fix the highlighted fields.', fields: { phone: 'This number is already registered to another member.' } });
+  if (!m.phone_verified && phone !== (m.phone || null)) {
+    if (phone && !(await store.setContact(m.id, 'phone', phone))) {
+      return res.status(409).json({ error: 'Please fix the highlighted fields.', fields: { phone: 'This number is already registered to another member.' } });
+    }
+    if (!phone) await store.setContact(m.id, 'phone', null);
   }
   if (!m.email_verified && email !== (m.email || null)) {
     if (email && !(await store.setContact(m.id, 'email', email))) {
@@ -271,8 +278,49 @@ app.post('/api/auth/logout-all', h(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// ---- Polling units near a location --------------------------------------------
+// public/geo/<state>.json holds INEC's state > LGA > ward > polling unit lists, with GPS where known.
+const GEO_DIR = path.join(__dirname, 'public', 'geo');
+const near = { lat: [], lng: [], ref: [] };
+try {
+  const index = JSON.parse(fs.readFileSync(path.join(GEO_DIR, 'index.json'), 'utf8'));
+  for (const [state, slug] of Object.entries(index)) {
+    const data = JSON.parse(fs.readFileSync(path.join(GEO_DIR, `${slug}.json`), 'utf8'));
+    for (const L of data.lgas) for (const W of L.w) for (const P of W.p) {
+      if (P.length < 4) continue;
+      near.lat.push(P[2]); near.lng.push(P[3]); near.ref.push([state, L.n, W.n, P[0], P[1]]);
+    }
+  }
+  near.lat = Float64Array.from(near.lat); near.lng = Float64Array.from(near.lng);
+  console.log(`Loaded ${near.ref.length.toLocaleString()} polling-unit locations`);
+} catch (err) {
+  console.warn('Polling-unit data not loaded:', err.message);
+}
+
+app.get('/api/geo/near', (req, res) => {
+  const lat = Number(req.query.lat), lng = Number(req.query.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+    return res.status(400).json({ error: 'Bad location.' });
+  }
+  const k = Math.cos((lat * Math.PI) / 180);
+  const best = [];                                   // keep the 6 closest
+  for (let i = 0; i < near.lat.length; i++) {
+    const dy = near.lat[i] - lat, dx = (near.lng[i] - lng) * k, d = dy * dy + dx * dx;
+    if (best.length < 6 || d < best[best.length - 1][0]) {
+      best.push([d, i]); best.sort((a, b) => a[0] - b[0]); if (best.length > 6) best.pop();
+    }
+  }
+  const results = best.map(([d, i]) => {
+    const [state, lga, ward, name, code] = near.ref[i];
+    return { state, lga, ward, name, code, metres: Math.round(Math.sqrt(d) * 111320) };
+  }).filter((r) => r.metres < 25000);
+  res.set('Cache-Control', 'no-store').json({ results });
+});
+
 // One page handles both joining and logging in.
 app.get(['/join', '/signup'], (req, res) => res.redirect(302, '/login'));
+app.get('/welcome', (req, res) => res.redirect(302, '/account'));
+app.use('/geo', express.static(GEO_DIR, { maxAge: '7d' }));
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 
 app.use((err, req, res, next) => {

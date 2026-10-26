@@ -6,7 +6,15 @@
 <title>PBAT DOOR TO DOOR</title>
 <meta name="description" content="Join the PBAT DOOR TO DOOR volunteer network and learn about the work of President Bola Ahmed Tinubu's administration.">
 <meta name="theme-color" content="#06492a">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230a6b3d'/%3E%3Cpath d='M10 26V7h12v19' fill='none' stroke='%23fff' stroke-width='2.4'/%3E%3Ccircle cx='19' cy='17' r='1.6' fill='%23e2a72e'/%3E%3C/svg%3E">
+<meta property="og:title" content="PBAT DOOR TO DOOR Movement 2027">
+<meta property="og:description" content="Join the volunteer network taking President Bola Ahmed Tinubu's record door to door.">
+<meta property="og:image" content="/images/logo.png">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32.png">
+<link rel="apple-touch-icon" href="/images/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/styles.css">
@@ -15,9 +23,8 @@
 
 <nav class="nav">
   <div class="wrap">
-    <a class="brand" href="/">
-      <span class="mark"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 21V3h12v18M3 21h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="14.5" cy="12.5" r="1.3" fill="#e2a72e"/></svg></span>
-      <span>PBAT DOOR TO DOOR<small>Volunteer network</small></span>
+    <a class="brand" href="/" aria-label="PBAT Door to Door home">
+      <img class="brand-logo" src="/images/logo-transparent.png" alt="PBAT Door to Door Movement 2027" width="900" height="563">
     </a>
     <div class="nav-links">
       <a class="hide-sm" href="#about">About</a>
@@ -40,14 +47,9 @@
         <a class="btn ghost" style="color:#fff;border-color:rgba(255,255,255,.35)" href="#works">See his works</a>
       </div>
     </div>
-    <figure class="portrait" style="margin:0">
-      <div class="frame ph" data-initials="BAT">
-        <img alt="President Bola Ahmed Tinubu" data-sources="/images/hero.jpg|https://commons.wikimedia.org/wiki/Special:FilePath/Bola_A_Tinubu_presidential_portrait_2023.jpg?width=900">
-      </div>
-      <figcaption>
-        <strong>President Bola Ahmed Tinubu, GCFR</strong>
-        <span>16th President of the Federal Republic of Nigeria, in office since 29 May 2023</span>
-      </figcaption>
+    <figure class="hero-logo">
+      <img src="/images/logo.png" alt="PBAT Door to Door Movement 2027 logo with a portrait of President Bola Ahmed Tinubu" width="1600" height="1064">
+      <figcaption>President Bola Ahmed Tinubu, GCFR · 16th President of the Federal Republic of Nigeria</figcaption>
     </figure>
   </div>
 </header>
@@ -116,8 +118,8 @@
 
 <footer class="site">
   <div class="wrap">
-    <span>© <span id="year"></span> PBAT DOOR TO DOOR</span>
-    <span>Figures come from the sources linked on each card. Photos are from Wikimedia Commons, with credits on each image.</span>
+    <span class="foot-brand"><img src="/images/icon-192.png" alt="" width="28" height="28"> © <span id="year"></span> PBAT DOOR TO DOOR Movement</span>
+    <span><a href="/login">Join or log in</a></span>
   </div>
 </footer>
 
@@ -185,6 +187,11 @@
 
   $('#year').textContent = new Date().getFullYear();
   loadImages();
+  // Gallery: remove any photo that can't load, and hide the section if none do.
+  const gal = $('#gallery-grid');
+  gal.querySelectorAll('figure').forEach((f) => new MutationObserver(() => {
+    if (f.classList.contains('missing')) { f.remove(); if (!gal.querySelector('figure')) $('#gallery').hidden = true; else gal.dataset.count = gal.children.length; }
+  }).observe(f, { attributes: true, attributeFilter: ['class'] }));
   initNav();
 </script>
 </body>

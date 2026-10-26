@@ -62,7 +62,8 @@ export function validateProfile(input, { requireConsent = true } = {}) {
 
   p.date_of_birth = clean(input.date_of_birth, 10);
   const age = ageOn(p.date_of_birth);
-  if (age == null) errors.date_of_birth = p.date_of_birth ? 'Enter a real date as DD/MM/YYYY, e.g. 28/11/2000.' : 'Enter your date of birth.';
+  if (!p.date_of_birth) { /* optional */ }
+  else if (age == null) errors.date_of_birth = 'Enter a real date as DD/MM/YYYY, e.g. 28/11/2000.';
   else if (age < 18) errors.date_of_birth = 'You must be 18 or older to join.';
   else if (age > 120) errors.date_of_birth = 'Check your date of birth.';
 
@@ -73,7 +74,7 @@ export function validateProfile(input, { requireConsent = true } = {}) {
   if (p.lga.length < 2) errors.lga = 'Enter your local government area.';
 
   p.ward = clean(input.ward, 80);
-  p.polling_unit = clean(input.polling_unit, 80);
+  p.polling_unit = clean(input.polling_unit, 160);
   p.address = clean(input.address, 200);
   p.occupation = clean(input.occupation, 80);
 

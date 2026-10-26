@@ -1,10 +1,12 @@
 # PBAT DOOR TO DOOR
 
 A volunteer website with:
-- **Landing page** (`/`): the President's photos, a short bio timeline, and his administration's works, each linked to its source.
-- **Join or log in** (`/login`, `/join`): one box. Type an email **or** Nigerian phone number, get a 6-digit code by email or SMS, and you're in. The first time creates the account.
-- **Welcome** (`/welcome`): shown once after the first login. Full name, phone or email (whichever they didn't sign in with), gender, date of birth, state, LGA, ward, polling unit, address, occupation, ways to help, consent.
-- **My account** (`/account`): view and edit details, see logged-in devices, log out. People stay logged in until they log out.
+- **Landing page** (`/`): the PBAT Door to Door Movement 2027 logo, a short bio timeline, and the administration's works, each linked to its source.
+- **Join or log in** (`/login`, `/join`): one box. Type an email **or** Nigerian phone number, enter the 6-digit code, and you're straight into your account. The first time creates it.
+- **My account** (`/account`): new members see a "Complete your profile" prompt. Only **full name, state and LGA** are required; everything else is optional. Edit details, see logged-in devices, log out. People stay logged in until they log out.
+
+### Polling units
+State → LGA → ward → polling unit are searchable lists built from INEC's data (176,846 polling units, 8,810 wards, 774 LGAs) in `public/geo/`. **Find polling units near me** uses the phone's location to suggest the closest polling units (INEC has GPS for about 163,000 of them) and fills in state, LGA, ward and unit in one tap. INEC's coordinates are occasionally wrong, so each suggestion shows its ward and LGA.
 
 ### Sign-in by phone (SMS)
 Texting codes costs money with every provider (roughly ₦5–₦25 per text). The app supports:
@@ -110,7 +112,7 @@ store.js           Database layer: Postgres if DATABASE_URL is set, otherwise SQ
 mailer.js          Email sending: Brevo / Resend / SMTP / console
 public/index.html  Landing page (photos, bio, works)
 public/login.html  Join or log in (email or phone)
-public/welcome.html  Questions after the first login
+public/geo/         INEC polling-unit lists, one file per state
 public/account.html  Member area
 public/app.js, styles.css  Shared code and styles
 public/images/     Your own photos (optional)

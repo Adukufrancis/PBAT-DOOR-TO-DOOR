@@ -163,19 +163,24 @@ export function renderProfileFields(container, opts, v = {}) {
       <legend>Your details</legend>
       <div class="grid">
         ${field('full_name', 'Full name', text('full_name', 'autocomplete="name" placeholder="e.g. Amina Bello"'), { full: true })}
-        ${field('phone', 'Phone number', text('phone', `type="tel" autocomplete="tel" inputmode="tel" placeholder="0803 123 4567"${v.phoneVerified ? ' readonly' : ''}`), { verified: v.phoneVerified })}
+        ${field('phone', 'Phone number', text('phone', `type="tel" autocomplete="tel" inputmode="tel" placeholder="0803 123 4567"${v.phoneVerified ? ' readonly' : ''}`), { optional: !v.phoneVerified, verified: v.phoneVerified })}
         ${field('email', 'Email address', text('email', `type="email" autocomplete="email" inputmode="email" placeholder="you@example.com"${v.emailVerified ? ' readonly' : ''}`), { optional: !v.emailVerified, verified: v.emailVerified })}
         ${field('gender', 'Gender', select('gender', opts.genders, 'Select…'), { optional: true })}
-        ${field('date_of_birth', 'Date of birth', `<input id="f-date_of_birth" name="date_of_birth" inputmode="numeric" autocomplete="bday" placeholder="DD / MM / YYYY" maxlength="10" value="${esc(isoToDmy(v.date_of_birth))}">`)}
+        ${field('date_of_birth', 'Date of birth', `<input id="f-date_of_birth" name="date_of_birth" inputmode="numeric" autocomplete="bday" placeholder="DD / MM / YYYY" maxlength="10" value="${esc(isoToDmy(v.date_of_birth))}">`, { optional: true })}
       </div>
     </fieldset>
     <fieldset>
-      <legend>Where you are</legend>
+      <legend>Where you vote</legend>
+      <div class="near-box">
+        <button type="button" class="btn small ghost near-btn">📍 Find polling units near me</button>
+        <span class="near-status"></span>
+        <div class="near-list"></div>
+      </div>
       <div class="grid">
         ${field('state', 'State', select('state', opts.states, 'Select your state…'))}
-        ${field('lga', 'Local government area (LGA)', text('lga', 'placeholder="e.g. Bwari"'))}
-        ${field('ward', 'Ward', text('ward', 'placeholder="e.g. Kubwa"'), { optional: true })}
-        ${field('polling_unit', 'Polling unit', text('polling_unit', 'placeholder="Name or code"'), { optional: true })}
+        ${field('lga', 'Local government area (LGA)', `<select id="f-lga" name="lga" disabled><option value="">Choose your state first</option></select>`)}
+        ${field('ward', 'Ward', `<select id="f-ward" name="ward" disabled><option value="">Choose your LGA first</option></select>`, { optional: true })}
+        ${field('polling_unit', 'Polling unit', `<select id="f-polling_unit" name="polling_unit" disabled><option value="">Choose your ward first</option></select>`, { optional: true })}
         ${field('address', 'Address', text('address', 'autocomplete="street-address"'), { full: true, optional: true })}
       </div>
     </fieldset>
@@ -193,6 +198,7 @@ export function renderProfileFields(container, opts, v = {}) {
     </fieldset>`;
   autoFormatDob($('#f-date_of_birth', container));
   enhanceSelects(container);
+  setupPlaces(container, v);
 }
 
 export function readProfileFields(container) {
@@ -212,8 +218,8 @@ export function checkProfile(p, v = {}) {
   if (p.full_name.trim().split(/\s+/).filter(Boolean).length < 2) e.full_name = 'Enter your first and last name.';
   if (!v.emailVerified && p.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(p.email.trim())) e.email = 'Enter a valid email address, or leave it blank.';
   const digits = p.phone.replace(/[^\d+]/g, '');
-  if (!v.phoneVerified && !/^(\+?234|0)[789]\d{9}$/.test(digits)) e.phone = 'Enter a valid Nigerian phone number, e.g. 0803 123 4567.';
-  if (!p.date_of_birth) e.date_of_birth = 'Enter your date of birth.';
+  if (!v.phoneVerified && digits && !/^(\+?234|0)[789]\d{9}$/.test(digits)) e.phone = 'Enter a valid Nigerian phone number (e.g. 0803 123 4567), or leave it blank.';
+  if (!p.date_of_birth) { /* optional */ }
   else if (p.date_of_birth === 'invalid') e.date_of_birth = 'Enter a real date as DD/MM/YYYY, e.g. 28/11/2000.';
   else {
     const dob = new Date(p.date_of_birth + 'T00:00:00'); const now = new Date();
@@ -223,7 +229,7 @@ export function checkProfile(p, v = {}) {
     else if (age > 120) e.date_of_birth = 'Check the year of your date of birth.';
   }
   if (!p.state) e.state = 'Choose your state.';
-  if (p.lga.trim().length < 2) e.lga = 'Enter your local government area.';
+  if (p.lga.trim().length < 2) e.lga = 'Choose your local government area.';
   return e;
 }
 
@@ -330,8 +336,11 @@ export function enhanceSelects(root = document) {
       else if (e.key === 'Enter') { e.preventDefault(); if (visible[active]) choose(visible[active]); }
       else if (e.key === 'Escape') { e.preventDefault(); close(); btn.focus(); }
       else if (e.key === 'Tab') close();
-      else if (!search && e.key.length === 1) {   // type-to-jump for short lists
-        const i = visible.findIndex((o) => o.textContent.toLowerCase().startsWith(e.key.toLowerCase()));
+      else if (!search && e.key.length === 1) {   // type-ahead for short lists: letters typed in quick succession
+        clearTimeout(wrap._tt); wrap._typed = (wrap._typed || '') + e.key.toLowerCase();
+        wrap._tt = setTimeout(() => (wrap._typed = ''), 900);
+        const q = wrap._typed, names = visible.map((o) => o.textContent.toLowerCase());
+        let i = names.findIndex((n) => n.startsWith(q)); if (i < 0) i = names.findIndex((n) => n.includes(q));
         if (i >= 0) { active = i; highlight(); }
       }
     };
@@ -348,5 +357,107 @@ export function enhanceSelects(root = document) {
     // Let showFieldErrors focus the dropdown like any other field.
     select.focus = () => btn.focus();
     paintButton();
+  });
+}
+
+
+// ---- State > LGA > ward > polling unit (INEC lists) + "near me" ------------------
+const geo = { index: null, states: {} };
+async function loadState(state) {
+  if (!state) return null;
+  if (geo.states[state]) return geo.states[state];
+  try {
+    if (!geo.index) geo.index = await (await fetch('/geo/index.json')).json();
+    const slug = geo.index[state]; if (!slug) return null;
+    geo.states[state] = await (await fetch(`/geo/${slug}.json`)).json();
+    return geo.states[state];
+  } catch { return null; }
+}
+const puValue = (p) => `${p[0]} (${p[1]})`;
+
+function setOptions(container, name, items, { value = '', placeholder = 'Select…', disabled = false } = {}) {
+  const field = $(`[data-field="${name}"]`, container);
+  const old = $('.dd', field) || $('select', field) || $('input', field);
+  const sel = document.createElement('select'); sel.id = `f-${name}`; sel.name = name; sel.disabled = disabled;
+  sel.append(new Option(placeholder, ''));
+  for (const it of items) { const o = new Option(it.label ?? it, it.value ?? it); if ((it.value ?? it) === value) o.selected = true; sel.append(o); }
+  if (value && !items.some((it) => (it.value ?? it) === value)) { const o = new Option(value, value); o.selected = true; sel.append(o); }  // keep a saved value
+  old.replaceWith(sel);
+  const label = $('label', field); if (label) label.htmlFor = sel.id;
+  if (!disabled) enhanceSelects(field);
+  else { const wrap = document.createElement('div'); wrap.className = 'dd'; sel.replaceWith(wrap); wrap.append(sel);
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'dd-btn'; b.disabled = true;
+    b.innerHTML = `<span class="ph-text">${placeholder}</span>`; wrap.append(b); }
+}
+function textInput(container, name, value, placeholder) {      // fallback if the lists can't load
+  const field = $(`[data-field="${name}"]`, container);
+  const old = $('.dd', field) || $('select', field) || $('input', field);
+  const inp = document.createElement('input'); inp.id = `f-${name}`; inp.name = name; inp.value = value || ''; inp.placeholder = placeholder;
+  old.replaceWith(inp);
+}
+
+async function fillFrom(container, sel) {   // sel: {state, lga, ward, polling_unit}
+  const data = await loadState(sel.state);
+  if (!data) {
+    textInput(container, 'lga', sel.lga, 'e.g. Bwari'); textInput(container, 'ward', sel.ward, 'e.g. Kubwa');
+    textInput(container, 'polling_unit', sel.polling_unit, 'Name or code'); return;
+  }
+  const L = data.lgas.find((l) => l.n === sel.lga);
+  setOptions(container, 'lga', data.lgas.map((l) => l.n), { value: sel.lga, placeholder: 'Select your LGA…' });
+  if (!L) {
+    setOptions(container, 'ward', [], { placeholder: 'Choose your LGA first', disabled: true });
+    setOptions(container, 'polling_unit', [], { placeholder: 'Choose your ward first', disabled: true }); return;
+  }
+  const W = L.w.find((w) => w.n === sel.ward);
+  setOptions(container, 'ward', L.w.map((w) => w.n), { value: sel.ward, placeholder: `Select your ward (${L.w.length})…` });
+  if (!W) { setOptions(container, 'polling_unit', [], { value: sel.polling_unit, placeholder: 'Choose your ward first', disabled: !sel.polling_unit }); return; }
+  setOptions(container, 'polling_unit', W.p.map((p) => ({ value: puValue(p), label: `${p[1]} · ${p[0]}` })),
+    { value: sel.polling_unit, placeholder: `Select your polling unit (${W.p.length})…` });
+}
+
+function setupPlaces(container, v) {
+  const current = () => ({
+    state: $('[name="state"]', container).value, lga: $('[name="lga"]', container)?.value || '',
+    ward: $('[name="ward"]', container)?.value || '', polling_unit: $('[name="polling_unit"]', container)?.value || '',
+  });
+  if (v.state) fillFrom(container, v);
+  container.addEventListener('change', (e) => {
+    const n = e.target.name; const c = current();
+    if (n === 'state') fillFrom(container, { state: c.state });
+    if (n === 'lga') fillFrom(container, { state: c.state, lga: c.lga });
+    if (n === 'ward') fillFrom(container, { state: c.state, lga: c.lga, ward: c.ward });
+  });
+
+  const btn = $('.near-btn', container), status = $('.near-status', container), list = $('.near-list', container);
+  btn.addEventListener('click', () => {
+    if (!navigator.geolocation) { status.textContent = "Your browser can't share your location."; return; }
+    btn.disabled = true; status.textContent = 'Finding your location…'; list.innerHTML = '';
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      status.textContent = 'Looking up polling units…';
+      const { ok, data } = await api(`/api/geo/near?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}`);
+      btn.disabled = false;
+      if (!ok || !data.results.length) { status.textContent = 'No polling units found near you. Choose from the lists below.'; return; }
+      status.textContent = 'Tap your polling unit:';
+      for (const r of data.results) {
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'near-item';
+        const dist = r.metres < 1000 ? `${r.metres} m` : `${(r.metres / 1000).toFixed(1)} km`;
+        b.innerHTML = '<strong></strong><span></span><em></em>';
+        b.querySelector('strong').textContent = r.name;
+        b.querySelector('span').textContent = `${r.ward}, ${r.lga}, ${r.state}`;
+        b.querySelector('em').textContent = dist;
+        b.addEventListener('click', async () => {
+          const st = $('[name="state"]', container); st.value = r.state;
+          st.closest('.dd')?.querySelector('.dd-btn span')?.replaceChildren(document.createTextNode(r.state));
+          st.closest('.dd')?.querySelector('.dd-btn span')?.classList.remove('ph-text');
+          await fillFrom(container, { state: r.state, lga: r.lga, ward: r.ward, polling_unit: puValue([r.name, r.code]) });
+          list.innerHTML = ''; status.textContent = `✓ ${r.name} selected`;
+          ['state', 'lga', 'ward', 'polling_unit'].forEach((f) => $(`[data-field="${f}"]`, container)?.classList.remove('invalid'));
+        });
+        list.append(b);
+      }
+    }, (err) => {
+      btn.disabled = false;
+      status.textContent = err.code === 1 ? 'Location permission was declined. Choose from the lists below.' : "Couldn't get your location. Choose from the lists below.";
+    }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
   });
 }
