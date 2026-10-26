@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Join or log in · PBAT DOOR TO DOOR</title>
+<meta name="theme-color" content="#06492a">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32.png">
+<link rel="apple-touch-icon" href="/images/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="PBAT Door to Door home">
+      <img class="brand-logo" src="/images/logo-transparent.png" alt="PBAT Door to Door Movement 2027" width="900" height="563">
+    </a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a class="hide-sm" href="/#works">His works</a>
+    </div>
+  </div>
+</nav>
+
+<main class="page">
+  <div class="wrap">
+    <div class="boot step active" id="s-boot">Loading…</div>
+
+    <!-- Step 1: email or phone -->
+    <form class="card narrow step" id="s-id" novalidate>
+      <h1>Join or log in</h1>
+      <p class="sub">Enter your email or phone number. We'll send you a 6-digit code. New here? This creates your account.</p>
+      <div class="field" data-field="identifier">
+        <label for="identifier">Email or phone number</label>
+        <input id="identifier" type="text" autocomplete="username" autocapitalize="off" spellcheck="false"
+               placeholder="you@example.com or 0803 123 4567">
+        <div class="err"></div>
+      </div>
+      <p class="id-hint" id="hint" hidden></p>
+      <button class="btn block" id="send" type="submit" style="margin-top:16px"><span class="spinner"></span><span>Continue</span></button>
+      <div class="msg err" id="id-err"></div>
+      <p class="switch" style="font-size:13px">No password needed. You'll stay logged in on this device until you log out.</p>
+    </form>
+
+    <!-- Step 2: code -->
+    <form class="card narrow step" id="s-code" novalidate>
+      <h1>Enter your code</h1>
+      <p class="sub" id="sent-msg"></p>
+      <div class="otp" id="otp" role="group" aria-label="6-digit code"></div>
+      <button class="btn block" id="verify" type="submit" style="margin-top:16px"><span class="spinner"></span><span>Continue</span></button>
+      <div class="msg err" id="code-err"></div>
+      <div class="msg dev" id="dev-note"></div>
+      <div class="row">
+        <button type="button" class="linkish" id="back">← Use a different email or number</button>
+        <button type="button" class="linkish" id="resend" disabled>Resend code</button>
+      </div>
+    </form>
+  </div>
+</main>
+
+<script type="module">
+  import { $, api, setLoading, message, devCodeNote, showStep, createOtp, cooldown } from '/app.js';
+
+  let identifier = '';
+  const me = await api('/api/me');
+  if (me.ok) location.replace('/account');
+
+  const { data: opts } = await api('/api/options');
+  if (!opts.sms) {
+    $('#hint').hidden = false;
+    $('#hint').textContent = 'Sign-in by phone is coming soon. Please use your email for now.';
+    $('label[for="identifier"]').textContent = 'Email address';
+    $('#identifier').placeholder = 'you@example.com';
+  }
+  showStep('s-id'); $('#identifier').focus();
+
+  async function send() {
+    const { ok, data } = await api('/api/auth/start', { identifier });
+    if (!ok) {
+      if (data.retryAfter) cooldown($('#resend'), data.retryAfter);
+      return { error: data.error || 'Something went wrong.', retry: Boolean(data.retryAfter) };
+    }
+    const how = data.type === 'email' ? 'email' : 'text message';
+    $('#sent-msg').textContent = `We sent a 6-digit code by ${how} to ${data.sentTo}. It expires in 10 minutes.`;
+    devCodeNote($('#dev-note'), data.devCode);
+    cooldown($('#resend'), data.cooldown);
+    return {};
+  }
+
+  $('#s-id').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const value = $('#identifier').value.trim();
+    const field = $('[data-field="identifier"]');
+    const bad = !value
+      || (value.includes('@') ? !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value) : !/^(\+?234|0)[789]\d{9}$/.test(value.replace(/[\s\-()]/g, '')));
+    field.classList.toggle('invalid', bad);
+    $('.err', field).textContent = bad ? (value.includes('@') || !opts.sms ? 'Enter a valid email address.' : 'Enter a valid email or Nigerian phone number, e.g. 0803 123 4567.') : '';
+    if (bad) return $('#identifier').focus();
+
+    identifier = value; message($('#id-err'), '');
+    const btn = $('#send'); setLoading(btn, true);
+    const { error, retry } = await send();
+    setLoading(btn, false);
+    if (error && !retry) return message($('#id-err'), error);
+    message($('#code-err'), retry ? error : '');
+    showStep('s-code'); otp.clear();
+  });
+
+  const otp = createOtp($('#otp'), () => $('#s-code').requestSubmit());
+  $('#s-code').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const code = otp.value();
+    if (code.length !== 6) return message($('#code-err'), 'Enter all 6 digits.');
+    const btn = $('#verify'); if (btn.disabled) return;
+    setLoading(btn, true);
+    const { ok, data } = await api('/api/auth/verify', { identifier, code });
+    setLoading(btn, false);
+    if (!ok) {
+      otp.shake(); otp.clear();
+      message($('#code-err'), data.error || 'Something went wrong.');
+      if (data.expired) { clearInterval($('#resend')._timer); $('#resend').disabled = false; $('#resend').textContent = 'Send a new code'; }
+      return;
+    }
+    location.href = data.isNew ? '/account?welcome=1' : '/account';
+  });
+
+  $('#resend').addEventListener('click', async () => {
+    $('#resend').disabled = true; message($('#code-err'), '');
+    const { error } = await send();
+    if (error) return message($('#code-err'), error);
+    message($('#code-err'), 'A new code is on its way.', 'ok'); otp.clear();
+  });
+
+  $('#back').addEventListener('click', () => { clearInterval($('#resend')._timer); showStep('s-id'); $('#identifier').focus(); });
+</script>
+</body>
+</html>

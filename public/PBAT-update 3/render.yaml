@@ -1,0 +1,36 @@
+# Render Blueprint: Dashboard -> New -> Blueprint -> pick this repo.
+# Render will ask you for the values marked `sync: false`.
+services:
+  - type: web
+    name: pbat-door-to-door
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: APP_NAME
+        value: PBAT DOOR TO DOOR
+      # Postgres connection string (e.g. from Neon, Supabase or Render Postgres).
+      - key: DATABASE_URL
+        sync: false
+      # Email: set EITHER Brevo (BREVO_API_KEY) OR the free Gmail script
+      # (GMAIL_SCRIPT_URL + GMAIL_SCRIPT_SECRET, see apps-script/Code.gs). Leave the others empty.
+      - key: BREVO_API_KEY
+        sync: false
+      - key: GMAIL_SCRIPT_URL
+        sync: false
+      - key: GMAIL_SCRIPT_SECRET
+        sync: false
+      # SMS (optional, paid per text): Termii (Nigeria) or Twilio. Without one, sign-in by phone is off.
+      - key: TERMII_API_KEY
+        sync: false
+      - key: TERMII_SENDER_ID
+        sync: false
+      # The sender you verified in Brevo, e.g.  PBAT DOOR TO DOOR <you@gmail.com>
+      - key: MAIL_FROM
+        sync: false
