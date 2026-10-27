@@ -67,6 +67,7 @@
       <p class="id-hint" id="hint" hidden></p>
       <button class="btn block" id="send" type="submit" style="margin-top:16px"><span class="spinner"></span><span>Continue</span></button>
       <div class="msg err" id="id-err"></div>
+      <div id="recaptcha"></div>
       <p class="switch" style="font-size:13px">No password needed. You'll stay logged in on this device until you log out.</p>
     </form>
 
@@ -103,7 +104,63 @@
   }
   showStep('s-id'); $('#identifier').focus();
 
+  // ---- Phone codes through Google Firebase (when the server says so) ----
+  const useFirebase = (id) => opts.phoneVia === 'firebase' && !id.includes('@');
+  const toE164 = (v) => { const d = v.replace(/[^\d]/g, ''); return d.startsWith('234') ? `+${d}` : `+234${d.replace(/^0/, '')}`; };
+  const maskPhone = (p) => p.replace(/^(\+234)(\d{3})\d{4}(\d{3})$/, '$1 $2 ••• •$3');
+  let fb = null, confirmation = null, verifier = null;
+  async function firebase() {
+    if (fb) return fb;
+    const base = opts.firebase.sdk;
+    const [{ initializeApp }, auth] = await Promise.all([import(`${base}/firebase-app.js`), import(`${base}/firebase-auth.js`)]);
+    const app = initializeApp({ apiKey: opts.firebase.apiKey, authDomain: opts.firebase.authDomain, projectId: opts.firebase.projectId });
+    fb = { ...auth, auth: auth.getAuth(app) };
+    fb.auth.languageCode = 'en';
+    return fb;
+  }
+  const fbError = (e) => ({
+    'auth/invalid-phone-number': 'That phone number doesn\'t look right. Check it and try again.',
+    'auth/too-many-requests': 'Too many attempts from this device. Please wait a while and try again, or use your email.',
+    'auth/quota-exceeded': 'Phone sign-in is busy right now. Please use your email, or try again later.',
+    'auth/captcha-check-failed': 'The security check failed. Please reload the page and try again.',
+    'auth/invalid-app-credential': 'The security check failed. Please reload the page and try again.',
+    'auth/unauthorized-domain': 'Phone sign-in isn\'t switched on for this website yet. Please use your email for now.',
+    'auth/network-request-failed': 'No connection. Check your internet and try again.',
+  }[e?.code] || 'We couldn\'t send the text message. Please try again, or use your email.');
+
+  async function sendFirebase() {
+    try {
+      const f = await firebase();
+      try { verifier?.clear(); } catch {}
+      $('#recaptcha').innerHTML = '';
+      verifier = new f.RecaptchaVerifier(f.auth, 'recaptcha', { size: 'invisible' });
+      const phone = toE164(identifier);
+      confirmation = await f.signInWithPhoneNumber(f.auth, phone, verifier);
+      $('#sent-msg').textContent = `We sent a 6-digit code by text message to ${maskPhone(phone)}. Use it within a few minutes.`;
+      message($('#dev-note'), '');
+      cooldown($('#resend'), 60);
+      return {};
+    } catch (e) {
+      console.warn('Firebase phone sign-in:', e?.code || e);
+      return { error: fbError(e) };
+    }
+  }
+  async function verifyFirebase(code) {
+    try {
+      const cred = await confirmation.confirm(code);
+      const idToken = await cred.user.getIdToken();
+      const res = await api('/api/auth/firebase', { idToken });
+      try { await fb.signOut(fb.auth); } catch {}   // our own session takes over from here
+      return res;
+    } catch (e) {
+      const expired = e?.code === 'auth/code-expired' || e?.code === 'auth/session-expired';
+      const wrong = e?.code === 'auth/invalid-verification-code';
+      return { ok: false, data: { error: expired ? 'That code has expired. Request a new one.' : wrong ? 'Incorrect code. Check the text message and try again.' : fbError(e), expired } };
+    }
+  }
+
   async function send() {
+    if (useFirebase(identifier)) return sendFirebase();
     const { ok, data } = await api('/api/auth/start', { identifier });
     if (!ok) {
       if (data.retryAfter) cooldown($('#resend'), data.retryAfter);
@@ -142,7 +199,7 @@
     if (code.length !== 6) return message($('#code-err'), 'Enter all 6 digits.');
     const btn = $('#verify'); if (btn.disabled) return;
     setLoading(btn, true);
-    const { ok, data } = await api('/api/auth/verify', { identifier, code });
+    const { ok, data } = useFirebase(identifier) && confirmation ? await verifyFirebase(code) : await api('/api/auth/verify', { identifier, code });
     setLoading(btn, false);
     if (!ok) {
       otp.shake(); otp.clear();
