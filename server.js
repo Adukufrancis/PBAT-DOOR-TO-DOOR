@@ -2,343 +2,454 @@ import 'dotenv/config';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import compression from 'compression';
-import QRCode from 'qrcode';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
+import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createDb } from './db.js';
-import { page, PAGES } from './pages.js';
+import { createStore, PROFILE_FIELDS } from './store.js';
+import { createMailer } from './mailer.js';
+import { createSms } from './sms.js';
+import { validateProfile, parseIdentifier, normalizePhone, isEmail, STATES, GENDERS, INTERESTS } from './validate.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
 const IS_PROD = process.env.NODE_ENV === 'production';
-const APP_NAME = process.env.APP_NAME || 'PBAT D2D Office Attendance';
-const TZ = process.env.TIMEZONE || 'Africa/Lagos';        // the day (and the daily code) changes at midnight here
 
-// SECRET signs the daily QR codes and the admin login. Keep it fixed: changing it changes today's code.
-let SECRET = process.env.SECRET;
-if (!SECRET) {
-  SECRET = 'dev-secret-change-me';
-  if (IS_PROD) console.warn('WARNING: SECRET is not set. Set a long random SECRET so codes and logins are safe.');
+// ---- Tunables ---------------------------------------------------------------
+const CODE_TTL_MS = 10 * 60 * 1000;          // a code is valid for 10 minutes
+const CODE_MAX_ATTEMPTS = 5;                 // wrong guesses before the code is burned
+const RESEND_COOLDOWN_MS = 60 * 1000;        // one new code per email/phone per minute
+const IP_SEND_LIMIT = 10;                    // codes one IP address can request per hour (protects SMS credit)
+const COOKIE_NAME = 'sid';
+// Browsers cap cookie lifetime at ~400 days, so the cookie is refreshed on visits.
+// The session itself never expires: only logging out ends it.
+const COOKIE_MAX_AGE_MS = 400 * 24 * 60 * 60 * 1000;
+
+const store = await createStore();
+const mailer = createMailer();
+const sms = createSms();
+// Phone sign-in works in development (codes go to the console) and in production once an SMS provider is set.
+// Google Firebase phone sign-in: Google sends the code (no Sender ID / CAC). The browser does the
+// code step with Firebase, then hands us a signed ID token proving the number; we verify it here.
+const FIREBASE = process.env.FIREBASE_API_KEY && process.env.FIREBASE_PROJECT_ID ? {
+  apiKey: process.env.FIREBASE_API_KEY.trim(),
+  projectId: process.env.FIREBASE_PROJECT_ID.trim(),
+  authDomain: (process.env.FIREBASE_AUTH_DOMAIN || `${process.env.FIREBASE_PROJECT_ID.trim()}.firebaseapp.com`).trim(),
+  sdk: (process.env.FIREBASE_SDK_URL || 'https://www.gstatic.com/firebasejs/10.12.2').replace(/\/+$/, ''),
+} : null;
+const firebaseKeys = FIREBASE && createRemoteJWKSet(new URL(process.env.FIREBASE_JWKS_URL
+  || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com'));
+const SMS_ENABLED = Boolean(FIREBASE || sms.provider) || !IS_PROD;
+
+if (IS_PROD && store.kind !== 'postgres') {
+  console.warn('WARNING: running in production without DATABASE_URL. On hosts with a temporary disk ' +
+    '(like Render free), every restart will sign everyone out. Set DATABASE_URL to a Postgres database.');
 }
-const hmac = (s) => crypto.createHmac('sha256', SECRET).update(s).digest('base64url');
+if (IS_PROD && !mailer.provider) {
+  console.warn('WARNING: no email provider configured (BREVO_API_KEY, GMAIL_SCRIPT_URL, RESEND_API_KEY or SMTP_HOST).');
+}
+if (IS_PROD && !sms.provider && !FIREBASE) {
+  console.warn('NOTE: no SMS provider configured (TERMII_API_KEY or TWILIO_*). Phone sign-in is off; email still works.');
+}
+
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
-const safeEqual = (a, b) => typeof a === 'string' && typeof b === 'string' && a.length === b.length
-  && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+const safeEqual = (a, b) =>
+  a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+const mask = (id) => (id.type === 'email'
+  ? id.value.replace(/^(.)(.*)(@.*)$/, (_, a, b, c) => a + '•'.repeat(Math.min(b.length, 6)) + c)
+  : id.value.replace(/^(\+234)(\d{3})\d{4}(\d{3})$/, '$1 $2 ••• •$3'));
 
-const db = await createDb();
+const publicMember = (m) => {
+  const out = {
+    email: m.email || '', emailVerified: Boolean(m.email_verified),
+    phone: m.phone || '', phoneVerified: Boolean(m.phone_verified),
+    createdAt: m.created_at,
+    profileComplete: Boolean(m.consent_at),
+  };
+  for (const f of PROFILE_FIELDS) out[f] = m[f];
+  out.interests = m.interests ? m.interests.split(', ') : [];
+  return out;
+};
 
-// ---- Admin password ------------------------------------------------------------
-// Starts as ADMIN_PASSWORD (Render setting). Changing it in the dashboard stores a scrypt hash in the
-// database. If ADMIN_PASSWORD on Render is changed later, that new value wins again (a way back in
-// if the dashboard password is forgotten).
-const ENV_PASSWORD = process.env.ADMIN_PASSWORD || (IS_PROD ? null : 'admin');
-const ENV_MARK = sha256(`env:${ENV_PASSWORD || ''}`);
-let adminPw = null;                                       // { salt, hash, env } when set in the dashboard
-try {
-  const row = await db.one('getSetting', ['admin_pw']);
-  const saved = row && JSON.parse(row.value);
-  if (saved && saved.env === ENV_MARK) adminPw = saved;
-  else if (saved) { await db.q('deleteSetting', ['admin_pw']); console.log('ADMIN_PASSWORD changed on the server: dashboard password reset.'); }
-} catch (err) { console.warn('Could not read admin password setting:', err.message); }
-let tempPassword = null;
-if (!ENV_PASSWORD && !adminPw) {
-  tempPassword = crypto.randomBytes(9).toString('base64url');
-  console.warn(`NOTE: ADMIN_PASSWORD is not set. For now the admin password is: ${tempPassword}`);
+// Very small in-memory limiter: N code requests per IP per hour.
+const ipHits = new Map();
+function ipAllowed(ip) {
+  const now = Date.now();
+  const hits = (ipHits.get(ip) || []).filter((t) => now - t < 60 * 60 * 1000);
+  if (hits.length >= IP_SEND_LIMIT) { ipHits.set(ip, hits); return false; }
+  hits.push(now); ipHits.set(ip, hits);
+  return true;
 }
-const scrypt = (pw, salt) => crypto.scryptSync(String(pw), salt, 32).toString('hex');
-function passwordOk(pw) {
-  pw = String(pw || '');
-  if (adminPw) return safeEqual(scrypt(pw, adminPw.salt), adminPw.hash);
-  const real = ENV_PASSWORD || tempPassword;
-  return Boolean(real) && safeEqual(sha256(pw), sha256(real));
-}
-const pwVersion = () => (adminPw ? adminPw.hash.slice(0, 12) : 'env');   // changing the password logs other devices out
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, hits] of ipHits) if (!hits.some((t) => now - t < 60 * 60 * 1000)) ipHits.delete(ip);
+}, 10 * 60 * 1000).unref();
 
-// ---- Check-out -------------------------------------------------------------------
-// From CHECKOUT_TIME (24-hour, default 17:00) a second scan checks the person out.
-const [OUT_H, OUT_M] = (/^(\d{1,2}):(\d{2})$/.exec(process.env.CHECKOUT_TIME || '17:00') || [0, 17, 0]).slice(1).map(Number);
-const CHECKOUT_LABEL = `${((OUT_H + 11) % 12) + 1}:${String(OUT_M).padStart(2, '0')} ${OUT_H < 12 ? 'AM' : 'PM'}`;
-const clockFmt = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
-const minutesNow = () => { const [hh, mm] = clockFmt.format(new Date()).split(':').map(Number); return hh * 60 + mm; };
-const checkoutOpen = () => minutesNow() >= OUT_H * 60 + OUT_M;
-
-// ---- Helpers ------------------------------------------------------------------
-
-const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
-const dayOf = (t = Date.now()) => dayFmt.format(new Date(t));              // YYYY-MM-DD in TZ
-const addDays = (day, n) => { const d = new Date(`${day}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
-
-/** Today's code for a venue: changes every day, can't be guessed without SECRET. */
-const codeFor = (venueId, day = dayOf()) => hmac(`qr:${venueId}:${day}`).slice(0, 12);
-
-/**
- * Everyone on the same WiFi reaches the internet through the same router, so they share its public
- * address: one IPv4 address, or (for IPv6) the same /64 network prefix.
- */
-function networkOf(ip = '') {
-  ip = String(ip).replace(/^::ffff:/i, '').split('%')[0];
-  if (!ip.includes(':')) return ip;
-  const [head, tail = ''] = ip.split('::');
-  const h = head ? head.split(':') : [], t = tail ? tail.split(':') : [];
-  const full = ip.includes('::') ? [...h, ...Array(8 - h.length - t.length).fill('0'), ...t] : h;
-  return `${full.slice(0, 4).map((x) => parseInt(x || '0', 16).toString(16)).join(':')}::/64`;
-}
-
-/**
- * The visitor's real internet address. Render sits behind Cloudflare, which sets CF-Connecting-IP
- * itself (a visitor can't fake it). Set CLIENT_IP_HEADER to use a different header if your host needs it.
- */
-function clientIp(req) {
-  const pick = (name) => String(req.get(name) || '').split(',')[0].trim();
-  if (process.env.CLIENT_IP_HEADER) return pick(process.env.CLIENT_IP_HEADER) || req.ip;
-  return pick('cf-connecting-ip') || pick('true-client-ip') || req.ip;
-}
-
-/** PBAT-D2D membership number: case and spaces don't matter ("pbat-d2d 0012" = "PBAT-D2D0012"). */
-function normalizeNumber(raw) {
-  const n = String(raw || '').toUpperCase().replace(/\s+/g, '').replace(/[–—_]/g, '-');
-  return /^[A-Z0-9][A-Z0-9\-\/.]{1,29}$/.test(n) && /\d/.test(n) ? n : null;
-}
-
-const baseUrl = (req) => (process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
-
-// ---- App ----------------------------------------------------------------------
+// ---- App --------------------------------------------------------------------
 const app = express();
-app.set('trust proxy', 1);              // Render sits behind one proxy: req.ip is the visitor's real address
+app.set('trust proxy', 1);                   // Render (and most hosts) sit behind a proxy
 app.disable('x-powered-by');
 app.use(compression());
-app.use(express.json({ limit: '10kb' }));
+app.use(express.json({ limit: '20kb' }));
 app.use(cookieParser());
+
+// Wrap async route handlers so errors reach the error handler.
 const h = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));
-app.use(express.static(path.join(__dirname, 'public'), { maxAge: IS_PROD ? '1h' : 0 }));
 
-// State-changing API calls must be JSON (blocks cross-site form posts).
+// Basic CSRF defence: state-changing API calls must be JSON (forms can't send that
+// cross-site without a CORS preflight) and the session cookie is SameSite=Lax.
 app.use('/api', (req, res, next) => {
-  if (req.method !== 'GET' && !req.is('application/json')) return res.status(415).json({ error: 'Expected JSON.' });
+  if (req.method === 'POST' && !req.is('application/json')) {
+    return res.status(415).json({ error: 'Expected JSON.' });
+  }
   res.set('Cache-Control', 'no-store');
   next();
 });
 
-// ---- Admin login ----------------------------------------------------------------
-const ADMIN_COOKIE = 'adm';
-const ADMIN_DAYS = 30;
-const adminToken = () => { const exp = Date.now() + ADMIN_DAYS * 864e5; return `${exp}.${hmac(`admin:${exp}:${pwVersion()}`)}`; };
-const isAdmin = (req) => {
-  const [exp, sig] = String(req.cookies[ADMIN_COOKIE] || '').split('.');
-  return Number(exp) > Date.now() && safeEqual(sig, hmac(`admin:${exp}:${pwVersion()}`));
-};
-const setAdminCookie = (res) => res.cookie(ADMIN_COOKIE, adminToken(), { httpOnly: true, secure: IS_PROD, sameSite: 'strict', maxAge: ADMIN_DAYS * 864e5, path: '/' });
-const needAdmin = (req, res, next) => (isAdmin(req) ? next() : res.status(401).json({ error: 'Please log in.' }));
+function setSessionCookie(res, token) {
+  res.cookie(COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: IS_PROD,
+    sameSite: 'lax',
+    maxAge: COOKIE_MAX_AGE_MS,
+    path: '/',
+  });
+}
 
-const loginTries = new Map();
-app.post('/api/admin/login', (req, res) => {
-  const now = Date.now();
-  const tries = (loginTries.get(clientIp(req)) || []).filter((t) => now - t < 15 * 60e3);
-  if (tries.length >= 10) return res.status(429).json({ error: 'Too many attempts. Wait 15 minutes and try again.' });
-  if (!passwordOk(req.body.password)) {
-    tries.push(now); loginTries.set(clientIp(req), tries);
-    return res.status(401).json({ error: 'Wrong password.' });
+// Loads the member from the session cookie (if any) and keeps the cookie fresh.
+app.use(h(async (req, res, next) => {
+  const token = req.cookies[COOKIE_NAME];
+  if (!token) return next();
+  const s = await store.getSession(sha256(token));
+  const member = s && (await store.memberById(s.member_id));
+  if (!member) {
+    res.clearCookie(COOKIE_NAME, { path: '/' });
+    return next();
   }
-  loginTries.delete(clientIp(req));
-  setAdminCookie(res);
+  req.member = member;
+  req.sessionHash = s.token_hash;
+  // Refresh at most once an hour to avoid a write per request.
+  if (Date.now() - s.last_seen > 60 * 60 * 1000) {
+    await store.touchSession(s.token_hash, Date.now());
+    setSessionCookie(res, token);
+  }
+  next();
+}));
+
+// Options for the forms, so the browser and server use the same lists.
+app.get('/api/options', (req, res) =>
+  res.json({
+    states: STATES, genders: GENDERS, interests: INTERESTS, sms: SMS_ENABLED,
+    phoneVia: FIREBASE && !sms.provider ? 'firebase' : 'server',
+    firebase: FIREBASE ? { apiKey: FIREBASE.apiKey, authDomain: FIREBASE.authDomain, projectId: FIREBASE.projectId, sdk: FIREBASE.sdk } : null,
+  }));
+
+// ---- Sending and checking 6-digit codes (used for sign-in and for linking a contact) ----
+// `key` is where the code is stored: the email/phone itself for sign-in, `link:<member>:<value>` for linking.
+async function sendCode(req, key, id) {
+  const existing = await store.getCode(key);
+  const now = Date.now();
+  if (existing && now - existing.sent_at < RESEND_COOLDOWN_MS) {
+    const wait = Math.ceil((RESEND_COOLDOWN_MS - (now - existing.sent_at)) / 1000);
+    return { status: 429, body: { error: `Please wait ${wait}s before requesting another code.`, retryAfter: wait } };
+  }
+  if (!ipAllowed(req.ip)) {
+    return { status: 429, body: { error: 'Too many codes requested from this connection. Try again in an hour.' } };
+  }
+  const code = crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
+  const managed = id.type === 'phone' && sms.managed;     // provider creates and checks the code itself
+  try {
+    if (managed) {
+      const ref = await sms.start(id.value);              // remember the provider's reference, not a code hash
+      await store.upsertCode(key, id.type, `ext:${ref}`, now + CODE_TTL_MS, now);
+    } else {
+      await store.upsertCode(key, id.type, sha256(`${key}:${code}`), now + CODE_TTL_MS, now);
+      if (id.type === 'email') await mailer.send(id.value, code);
+      else await sms.send(id.value, code);
+    }
+  } catch (err) {
+    console.error(`${id.type === 'email' ? 'Email' : 'SMS'} send failed:`, err.message);
+    await store.deleteCode(key);
+    return { status: 502, body: { error: id.type === 'email'
+      ? "We couldn't send the email. Check the address and try again shortly."
+      : "We couldn't send the text message. Check the number, or use your email instead." } };
+  }
+  const body = {
+    ok: true, type: id.type, identifier: id.value, sentTo: mask(id), cooldown: RESEND_COOLDOWN_MS / 1000,
+    via: id.type === 'email' ? 'email' : (sms.via || 'sms'),
+    expiresMinutes: managed ? null : CODE_TTL_MS / 60000,
+  };
+  // Without a provider in development, hand the code to the UI so the flow can be tested.
+  const noProvider = id.type === 'email' ? !mailer.provider : !sms.provider;
+  if (noProvider && !IS_PROD) body.devCode = code;
+  return { status: 200, body };
+}
+
+/** Returns null when the code is right (and burns it), otherwise { status, body } to send back. */
+async function checkCode(key, id, code) {
+  const row = await store.getCode(key);
+  if (!row || row.expires_at < Date.now()) {
+    if (row) await store.deleteCode(key);
+    return { status: 400, body: { error: 'That code has expired. Request a new one.', expired: true } };
+  }
+  if (row.attempts >= CODE_MAX_ATTEMPTS) {
+    await store.deleteCode(key);
+    return { status: 429, body: { error: 'Too many wrong attempts. Request a new code.', expired: true } };
+  }
+  let result;
+  if (row.code_hash.startsWith('ext:')) {
+    try { result = await sms.check(id.value, row.code_hash.slice(4), code); }
+    catch (err) {
+      console.error('SMS verify failed:', err.message);
+      return { status: 502, body: { error: "We couldn't check the code right now. Please try again in a moment." } };
+    }
+    if (result === 'expired') {
+      await store.deleteCode(key);
+      return { status: 400, body: { error: 'That code has expired. Request a new one.', expired: true } };
+    }
+  } else {
+    result = safeEqual(sha256(`${key}:${code}`), row.code_hash) ? 'ok' : 'wrong';
+  }
+  if (result !== 'ok') {
+    await store.bumpAttempts(key);
+    const left = CODE_MAX_ATTEMPTS - row.attempts - 1;
+    return { status: 400, body: {
+      error: left > 0 ? `Incorrect code. ${left} attempt${left === 1 ? '' : 's'} left.` : 'Too many wrong attempts. Request a new code.',
+      expired: left <= 0,
+    } };
+  }
+  await store.deleteCode(key);                            // single use
+  return null;
+}
+
+/** Google-signed Firebase token -> verified Nigerian phone number, or { status, body } on failure. */
+async function phoneFromFirebase(idToken) {
+  if (!FIREBASE) return { fail: { status: 404, body: { error: 'Phone sign-in is not set up.' } } };
+  let payload;
+  try {
+    ({ payload } = await jwtVerify(String(idToken || ''), firebaseKeys, {
+      issuer: `https://securetoken.google.com/${FIREBASE.projectId}`, audience: FIREBASE.projectId,
+    }));
+  } catch (err) {
+    console.error('Firebase token rejected:', err.code || err.message);
+    return { fail: { status: 401, body: { error: "We couldn't confirm your phone number. Please try again." } } };
+  }
+  const phone = normalizePhone(payload.phone_number);
+  if (!phone || payload.firebase?.sign_in_provider !== 'phone') {
+    return { fail: { status: 400, body: { error: 'Please use a Nigerian phone number.' } } };
+  }
+  return { phone };
+}
+
+async function startSession(req, res, member, isNew) {
+  const now = Date.now();
+  const token = crypto.randomBytes(32).toString('base64url');
+  await store.insertSession(sha256(token), member.id, now, String(req.get('user-agent') || '').slice(0, 200));
+  setSessionCookie(res, token);
+  res.json({ member: publicMember(member), isNew, needsProfile: !member.consent_at });
+}
+
+// Step 1 (sign up AND log in): email or phone -> code
+app.post('/api/auth/start', h(async (req, res) => {
+  const id = parseIdentifier(req.body.identifier);
+  if (!id) {
+    return res.status(400).json({ error: 'Enter a valid email address or Nigerian phone number (e.g. 0803 123 4567).' });
+  }
+  if (id.type === 'phone' && !SMS_ENABLED) {
+    return res.status(503).json({ error: "Sign-in by phone isn't available yet. Please use your email address.", code: 'sms_off' });
+  }
+  const { status, body } = await sendCode(req, id.value, id);
+  res.status(status).json(body);
+}));
+
+// Step 2: confirm the code -> log in (creating the account the first time)
+app.post('/api/auth/verify', h(async (req, res) => {
+  const id = parseIdentifier(req.body.identifier);
+  const code = String(req.body.code || '').replace(/\D/g, '');
+  if (!id || code.length !== 6) {
+    return res.status(400).json({ error: 'Enter the 6-digit code we sent you.' });
+  }
+  const fail = await checkCode(id.value, id, code);
+  if (fail) return res.status(fail.status).json(fail.body);
+  const { member, isNew } = await store.signInWith(id.type, id.value, Date.now());
+  await startSession(req, res, member, isNew);
+}));
+
+// Phone sign-in finished in the browser with Firebase: check Google's signed token, then log in.
+app.post('/api/auth/firebase', h(async (req, res) => {
+  const { phone, fail } = await phoneFromFirebase(req.body.idToken);
+  if (fail) return res.status(fail.status).json(fail.body);
+  const { member, isNew } = await store.signInWith('phone', phone, Date.now());
+  await startSession(req, res, member, isNew);
+}));
+
+// Who am I?
+app.get('/api/me', h(async (req, res) => {
+  if (!req.member) return res.status(401).json({ member: null });
+  const sessions = (await store.listSessions(req.member.id)).map((s) => ({
+    createdAt: s.created_at,
+    lastSeen: s.last_seen,
+    userAgent: s.user_agent,
+    current: s.token_hash === req.sessionHash,
+  }));
+  res.json({ member: publicMember(req.member), sessions });
+}));
+
+// Save my details (first time after sign-in, and later edits).
+// The contact used to sign in is verified and can't be changed here; the other one is optional
+// for email and required for phone.
+app.post('/api/me', h(async (req, res) => {
+  const m = req.member;
+  if (!m) return res.status(401).json({ error: 'Please log in.' });
+
+  const firstTime = !m.consent_at;
+  const { profile, errors = {} } = validateProfile(req.body, { requireConsent: firstTime });
+
+  let phone = null, email = null;
+  if (!m.phone_verified) {
+    const raw = String(req.body.phone || '').trim();
+    phone = raw ? normalizePhone(raw) : null;
+    if (raw && !phone) errors.phone = 'Enter a valid Nigerian phone number (e.g. 0803 123 4567), or leave it blank.';
+  }
+  if (!m.email_verified) {
+    const raw = String(req.body.email || '').trim().toLowerCase();
+    if (raw && !isEmail(raw)) errors.email = 'Enter a valid email address, or leave it blank.';
+    else email = raw || null;
+  }
+  if (Object.keys(errors).length) return res.status(400).json({ error: 'Please fix the highlighted fields.', fields: errors });
+
+  if (!m.phone_verified && phone !== (m.phone || null)) {
+    if (phone && !(await store.setContact(m.id, 'phone', phone))) {
+      return res.status(409).json({ error: 'Please fix the highlighted fields.', fields: { phone: 'This number already has its own account. Use "Link" under Sign-in methods to prove it\'s yours and join the two accounts.' } });
+    }
+    if (!phone) await store.setContact(m.id, 'phone', null);
+  }
+  if (!m.email_verified && email !== (m.email || null)) {
+    if (email && !(await store.setContact(m.id, 'email', email))) {
+      return res.status(409).json({ error: 'Please fix the highlighted fields.', fields: { email: 'This email already has its own account. Use "Link" under Sign-in methods to prove it\'s yours and join the two accounts.' } });
+    }
+    if (!email) await store.setContact(m.id, 'email', null);
+  }
+
+  await store.updateProfile(m.id, profile, Date.now());
+  res.json({ member: publicMember(await store.memberById(m.id)) });
+}));
+
+// ---- Linking a second email/phone to my account ------------------------------
+// The member proves they own the contact with a code. If it already belongs to another
+// account (e.g. they joined once by phone and once by email), the two accounts are merged.
+async function finishLink(res, m, type, value) {
+  const r = await store.linkContact(m.id, type, value);
+  if (r.conflict) {
+    return res.status(409).json({ error: `That ${type === 'email' ? 'email' : 'number'} belongs to an account that already has a different ${type === 'email' ? 'phone number' : 'email'}. Log in with it instead, or contact the team to merge.` });
+  }
+  res.json({ member: publicMember(await store.memberById(r.memberId)), merged: r.merged });
+}
+const linkKey = (m, id) => `link:${m.id}:${id.value}`;
+
+app.post('/api/me/link/start', h(async (req, res) => {
+  const m = req.member;
+  if (!m) return res.status(401).json({ error: 'Please log in.' });
+  const id = parseIdentifier(req.body.identifier);
+  if (!id) return res.status(400).json({ error: 'Enter a valid email address or Nigerian phone number.' });
+  if ((id.type === 'email' && m.email_verified) || (id.type === 'phone' && m.phone_verified)) {
+    return res.status(400).json({ error: `Your account already has a verified ${id.type === 'email' ? 'email' : 'phone number'}.` });
+  }
+  if (id.type === 'phone' && !SMS_ENABLED) return res.status(503).json({ error: "Phone codes aren't available yet." });
+  const { status, body } = await sendCode(req, linkKey(m, id), id);
+  res.status(status).json(body);
+}));
+
+app.post('/api/me/link/verify', h(async (req, res) => {
+  const m = req.member;
+  if (!m) return res.status(401).json({ error: 'Please log in.' });
+  const id = parseIdentifier(req.body.identifier);
+  const code = String(req.body.code || '').replace(/\D/g, '');
+  if (!id || code.length !== 6) return res.status(400).json({ error: 'Enter the 6-digit code we sent you.' });
+  const fail = await checkCode(linkKey(m, id), id, code);
+  if (fail) return res.status(fail.status).json(fail.body);
+  await finishLink(res, m, id.type, id.value);
+}));
+
+app.post('/api/me/link/firebase', h(async (req, res) => {
+  const m = req.member;
+  if (!m) return res.status(401).json({ error: 'Please log in.' });
+  if (m.phone_verified) return res.status(400).json({ error: 'Your account already has a verified phone number.' });
+  const { phone, fail } = await phoneFromFirebase(req.body.idToken);
+  if (fail) return res.status(fail.status).json(fail.body);
+  await finishLink(res, m, 'phone', phone);
+}));
+
+// Log out this device
+app.post('/api/auth/logout', h(async (req, res) => {
+  if (req.sessionHash) await store.deleteSession(req.sessionHash);
+  res.clearCookie(COOKIE_NAME, { path: '/' });
   res.json({ ok: true });
+}));
+
+// Log out every device
+app.post('/api/auth/logout-all', h(async (req, res) => {
+  if (req.member) await store.deleteMemberSessions(req.member.id);
+  res.clearCookie(COOKIE_NAME, { path: '/' });
+  res.json({ ok: true });
+}));
+
+// ---- Polling units near a location --------------------------------------------
+// public/geo/<state>.json holds INEC's state > LGA > ward > polling unit lists, with GPS where known.
+const GEO_DIR = path.join(__dirname, 'public', 'geo');
+const near = { lat: [], lng: [], ref: [] };
+try {
+  const index = JSON.parse(fs.readFileSync(path.join(GEO_DIR, 'index.json'), 'utf8'));
+  for (const [state, slug] of Object.entries(index)) {
+    const data = JSON.parse(fs.readFileSync(path.join(GEO_DIR, `${slug}.json`), 'utf8'));
+    for (const L of data.lgas) for (const W of L.w) for (const P of W.p) {
+      if (P.length < 4) continue;
+      near.lat.push(P[2]); near.lng.push(P[3]); near.ref.push([state, L.n, W.n, P[0], P[1]]);
+    }
+  }
+  near.lat = Float64Array.from(near.lat); near.lng = Float64Array.from(near.lng);
+  console.log(`Loaded ${near.ref.length.toLocaleString()} polling-unit locations`);
+} catch (err) {
+  console.warn('Polling-unit data not loaded:', err.message);
+}
+
+app.get('/api/geo/near', (req, res) => {
+  const lat = Number(req.query.lat), lng = Number(req.query.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+    return res.status(400).json({ error: 'Bad location.' });
+  }
+  const k = Math.cos((lat * Math.PI) / 180);
+  const best = [];                                   // keep the 6 closest
+  for (let i = 0; i < near.lat.length; i++) {
+    const dy = near.lat[i] - lat, dx = (near.lng[i] - lng) * k, d = dy * dy + dx * dx;
+    if (best.length < 6 || d < best[best.length - 1][0]) {
+      best.push([d, i]); best.sort((a, b) => a[0] - b[0]); if (best.length > 6) best.pop();
+    }
+  }
+  const results = best.map(([d, i]) => {
+    const [state, lga, ward, name, code] = near.ref[i];
+    return { state, lga, ward, name, code, metres: Math.round(Math.sqrt(d) * 111320) };
+  }).filter((r) => r.metres < 25000);
+  res.set('Cache-Control', 'no-store').json({ results });
 });
 
-// Change the admin password from the dashboard (needs the current one).
-app.post('/api/admin/password', (req, res, next) => (isAdmin(req) ? next() : res.status(401).json({ error: 'Please log in.' })), h(async (req, res) => {
-  const { current, next: fresh } = req.body;
-  if (!passwordOk(current)) return res.status(400).json({ field: 'current', error: 'Your current password is wrong.' });
-  if (String(fresh || '').length < 8) return res.status(400).json({ field: 'next', error: 'Use at least 8 characters.' });
-  if (passwordOk(fresh)) return res.status(400).json({ field: 'next', error: "That's the same as your current password." });
-  const salt = crypto.randomBytes(16).toString('hex');
-  const saved = { salt, hash: scrypt(fresh, salt), env: ENV_MARK };
-  await db.q('setSetting', ['admin_pw', JSON.stringify(saved)]);
-  adminPw = saved; tempPassword = null;
-  setAdminCookie(res);                                    // stay logged in here; other devices are logged out
-  res.json({ ok: true });
-}));
-app.post('/api/admin/logout', (req, res) => { res.clearCookie(ADMIN_COOKIE, { path: '/' }); res.json({ ok: true }); });
-
-// ---- Admin: venues and their WiFi ------------------------------------------------
-app.get('/api/admin/state', needAdmin, h(async (req, res) => {
-  const here = networkOf(clientIp(req)), today = dayOf();
-  const venues = await db.q('venues');
-  for (const v of venues) {
-    v.networks = (await db.q('networks', [v.id])).map((n) => ({ id: n.id, address: n.address, here: n.address === here }));
-    const c = await db.one('countToday', [v.id, today]);
-    v.today = c.n; v.out = c.out;
-  }
-  res.json({ appName: APP_NAME, here, today, timezone: TZ, checkoutTime: CHECKOUT_LABEL, venues });
-}));
-
-app.post('/api/admin/venues', needAdmin, h(async (req, res) => {
-  const name = String(req.body.name || '').trim().slice(0, 80);
-  if (!name) return res.status(400).json({ error: 'Give the office a name.' });
-  const { id } = await db.one('addVenue', [name, Date.now()]);
-  if (req.body.useThisNetwork) await db.q('addNetwork', [id, networkOf(clientIp(req)), Date.now()]);
-  res.json({ id });
-}));
-app.post('/api/admin/venues/:id/rename', needAdmin, h(async (req, res) => {
-  const name = String(req.body.name || '').trim().slice(0, 80);
-  if (!name) return res.status(400).json({ error: 'Give the office a name.' });
-  await db.q('renameVenue', [Number(req.params.id), name]); res.json({ ok: true });
-}));
-app.post('/api/admin/venues/:id/delete', needAdmin, h(async (req, res) => {
-  await db.q('deleteVenue', [Number(req.params.id)]); res.json({ ok: true });
-}));
-// "Use this network": save the WiFi the admin is connected to right now.
-app.post('/api/admin/venues/:id/networks', needAdmin, h(async (req, res) => {
-  const v = await db.one('venue', [Number(req.params.id)]);
-  if (!v) return res.status(404).json({ error: 'Office not found.' });
-  await db.q('addNetwork', [v.id, networkOf(clientIp(req)), Date.now()]);
-  res.json({ ok: true, address: networkOf(clientIp(req)) });
-}));
-app.post('/api/admin/venues/:id/networks/:nid/delete', needAdmin, h(async (req, res) => {
-  await db.q('deleteNetwork', [Number(req.params.nid), Number(req.params.id)]); res.json({ ok: true });
-}));
-
-// Today's QR for the venue screen.
-app.get('/api/admin/venues/:id/qr', needAdmin, h(async (req, res) => {
-  const v = await db.one('venue', [Number(req.params.id)]);
-  if (!v) return res.status(404).json({ error: 'Office not found.' });
-  const day = dayOf();
-  const url = `${baseUrl(req)}/c/${v.id}/${codeFor(v.id, day)}`;
-  const svg = await QRCode.toString(url, { type: 'svg', margin: 1, errorCorrectionLevel: 'M', color: { dark: '#06492a', light: '#ffffff' } });
-  const c = await db.one('countToday', [v.id, day]);
-  const networks = (await db.q('networks', [v.id])).length;
-  res.json({ name: v.name, day, url, svg, count: c.n, out: c.out, networks, appName: APP_NAME, checkoutTime: CHECKOUT_LABEL });
-}));
-
-// What the server sees of this connection (to check the WiFi detection after deploying).
-app.get('/api/admin/whoami', needAdmin, (req, res) => res.json({
-  used: clientIp(req), network: networkOf(clientIp(req)), reqIp: req.ip,
-  headers: Object.fromEntries(['cf-connecting-ip', 'true-client-ip', 'x-forwarded-for', 'x-real-ip'].map((k) => [k, req.get(k) || null])),
-}));
-
-// ---- Admin: attendance and people --------------------------------------------------
-async function attendanceRows(q) {
-  const today = dayOf();
-  const from = /^\d{4}-\d{2}-\d{2}$/.test(q.from) ? q.from : today;
-  const to = /^\d{4}-\d{2}-\d{2}$/.test(q.to) ? q.to : from;
-  return { from, to, rows: await db.q('attendanceFor', [from, to, Number(q.venue) || 0]) };
-}
-app.get('/api/admin/attendance', needAdmin, h(async (req, res) => res.json(await attendanceRows(req.query))));
-app.post('/api/admin/attendance/:id/delete', needAdmin, h(async (req, res) => {
-  await db.q('deleteAttendance', [Number(req.params.id)]); res.json({ ok: true });
-}));
-app.get('/admin/attendance.csv', h(async (req, res) => {
-  if (!isAdmin(req)) return res.redirect('/admin');
-  const { from, to, rows } = await attendanceRows(req.query);
-  const cell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const time = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit' });
-  const hours = (r) => (r.checkout_at ? ((r.checkout_at - r.at) / 36e5).toFixed(2) : '');
-  const lines = [['Date', 'Time in', 'Time out', 'Hours', 'Name', 'PBAT-D2D number', 'Office', 'Note'].map(cell).join(',')]
-    .concat(rows.map((r) => [r.day, time.format(new Date(r.at)), r.checkout_at ? time.format(new Date(r.checkout_at)) : '', hours(r),
-      r.name, r.member_no, r.venue, r.new_device ? 'New phone' : ''].map(cell).join(',')));
-  res.set('Content-Type', 'text/csv; charset=utf-8')
-    .set('Content-Disposition', `attachment; filename="attendance-${from}${to !== from ? `-to-${to}` : ''}.csv"`)
-    .send(`﻿${lines.join('\r\n')}`);
-}));
-app.get('/api/admin/people', needAdmin, h(async (req, res) => res.json({ people: await db.q('people') })));
-app.post('/api/admin/people/:id/rename', needAdmin, h(async (req, res) => {
-  const name = String(req.body.name || '').trim().slice(0, 80);
-  if (name.length < 2) return res.status(400).json({ error: 'Enter a name.' });
-  await db.q('renamePerson', [Number(req.params.id), name]); res.json({ ok: true });
-}));
-app.post('/api/admin/people/:id/reset-devices', needAdmin, h(async (req, res) => {
-  await db.q('clearDevices', [Number(req.params.id)]); res.json({ ok: true });
-}));
-app.post('/api/admin/people/:id/delete', needAdmin, h(async (req, res) => {
-  await db.q('deletePerson', [Number(req.params.id)]); res.json({ ok: true });
-}));
-
-// ---- Check-in (attendee's phone) ---------------------------------------------------
-const DEVICE_COOKIE = 'dev';
-const DEVICE_MAX_AGE = 400 * 864e5;
-
-app.post('/api/checkin', h(async (req, res) => {
-  const venue = await db.one('venue', [Number(req.body.venue) || 0]);
-  if (!venue) return res.status(404).json({ reason: 'invalid', error: "This QR code isn't one of ours." });
-
-  // 1. The code must be today's.
-  const today = dayOf(), code = String(req.body.code || '');
-  if (!safeEqual(code, codeFor(venue.id, today))) {
-    const old = Array.from({ length: 60 }, (_, i) => addDays(today, -(i + 1))).some((d) => safeEqual(code, codeFor(venue.id, d)));
-    return res.status(400).json(old
-      ? { reason: 'expired', venue: venue.name, error: "This QR code is from another day. Scan today's code at the office." }
-      : { reason: 'invalid', error: "This QR code isn't valid. Scan the code shown at the office." });
-  }
-
-  // 2. The phone must be on the venue's WiFi.
-  const here = networkOf(clientIp(req));
-  const nets = await db.q('networks', [venue.id]);
-  if (!nets.length) return res.status(409).json({ reason: 'setup', venue: venue.name, error: "This office's WiFi hasn't been set up yet. Please tell the office admin." });
-  if (!nets.some((n) => n.address === here)) {
-    return res.status(403).json({ reason: 'network', venue: venue.name,
-      error: `Connect to the ${venue.name} WiFi to check in. Turn off mobile data, join the WiFi, then tap Try again.` });
-  }
-
-  // 3. Who is this? Known phone (device cookie), or register now.
-  const token = req.cookies[DEVICE_COOKIE];
-  let person = token && (await db.one('personByDevice', [sha256(token)]));
-  let newDevice = 0;
-  if (!person) {
-    const name = String(req.body.name || '').trim().replace(/\s+/g, ' ').slice(0, 80);
-    const number = normalizeNumber(req.body.number);
-    if (!req.body.name && !req.body.number) return res.json({ status: 'register', venue: venue.name });
-    const fields = {};
-    if (name.length < 2) fields.name = 'Enter your full name.';
-    if (!number) fields.number = 'Enter your PBAT-D2D number as it appears on your ID card.';
-    if (Object.keys(fields).length) return res.status(400).json({ status: 'register', fields, error: 'Please fix the highlighted fields.' });
-
-    person = await db.one('personByNumber', [number]);
-    if (person) {
-      // Same PBAT-D2D number from a different phone: allowed, but flagged for the admin.
-      newDevice = (await db.one('deviceCount', [person.id])).n > 0 ? 1 : 0;
-    } else {
-      const { id } = await db.one('addPerson', [name, number, Date.now()]);
-      person = { id, name, member_no: number };
-    }
-    const fresh = crypto.randomBytes(32).toString('base64url');
-    await db.q('addDevice', [sha256(fresh), person.id, Date.now(), String(req.get('user-agent') || '').slice(0, 200)]);
-    res.cookie(DEVICE_COOKIE, fresh, { httpOnly: true, secure: IS_PROD, sameSite: 'lax', maxAge: DEVICE_MAX_AGE, path: '/' });
-  }
-
-  // 4. First scan of the day checks in. From check-out time, the next scan checks out.
-  const now = Date.now();
-  const before = await db.one('checkedIn', [person.id, venue.id, today]);
-  let action;
-  if (!before) {
-    await db.q('checkIn', [person.id, venue.id, today, now, clientIp(req), newDevice]);
-    action = 'in';
-  } else if (before.checkout_at) {
-    action = 'already-out';
-  } else if (checkoutOpen()) {
-    await db.q('checkOut', [person.id, venue.id, today, now]);
-    action = 'out';
-  } else {
-    action = 'already-in';
-  }
-  const row = await db.one('checkedIn', [person.id, venue.id, today]);
-  res.json({ status: 'ok', action, name: person.name, number: person.member_no, venue: venue.name,
-    at: row.at, outAt: row.checkout_at, checkoutTime: CHECKOUT_LABEL, checkoutOpen: checkoutOpen(), timezone: TZ });
-}));
-
-// ---- Pages -------------------------------------------------------------------------
-const send = (res, html) => res.set('Cache-Control', 'no-store').type('html').send(html);
-app.get('/', (req, res) => send(res, page(PAGES.home, { appName: APP_NAME })));
-app.get('/c/:venue/:code', (req, res) => send(res, page(PAGES.checkin, { appName: APP_NAME,
-  venue: req.params.venue, code: req.params.code })));
-app.get('/admin', (req, res) => send(res, page(isAdmin(req) ? PAGES.admin : PAGES.login, { appName: APP_NAME })));
-app.get('/admin/display/:id', (req, res) => (isAdmin(req)
-  ? send(res, page(PAGES.display, { appName: APP_NAME, venue: req.params.id })) : res.redirect('/admin')));
+// One page handles both joining and logging in.
+app.get(['/join', '/signup'], (req, res) => res.redirect(302, '/login'));
+app.get('/welcome', (req, res) => res.redirect(302, '/account'));
+app.use('/geo', express.static(GEO_DIR, { maxAge: '7d' }));
+app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 
 app.use((err, req, res, next) => {
   console.error(err);
   res.status(500).json({ error: 'Something went wrong on our side. Please try again.' });
 });
 
-app.listen(PORT, () => console.log(`${APP_NAME} running at http://localhost:${PORT} (db: ${db.kind}, timezone: ${TZ})`));
+// Housekeeping: clear expired codes every 15 minutes.
+setInterval(() => store.purgeCodes(Date.now()).catch(() => {}), 15 * 60 * 1000).unref();
+
+app.listen(PORT, () => {
+  console.log(`Running at http://localhost:${PORT}  (db: ${store.kind}, email: ${mailer.provider || 'console (dev)'}, sms: ${sms.provider || (FIREBASE ? 'firebase' : IS_PROD ? 'off' : 'console (dev)')})`);
+});
