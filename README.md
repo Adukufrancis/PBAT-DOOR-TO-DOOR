@@ -1,7 +1,7 @@
 # PBAT DOOR TO DOOR
 
 A volunteer website with:
-- **Landing page** (`/`): the PBAT Door to Door Movement 2027 logo, a short bio timeline, and the administration's works, each linked to its source.
+- **Landing page** (`/`): the movement and its Founder & Convener, Tompolo; the President's photo, a short bio timeline, and the administration's works, each linked to its source.
 - **Join or log in** (`/login`, `/join`): one box. Type an email **or** Nigerian phone number, enter the 6-digit code, and you're straight into your account. The first time creates it.
 - **My account** (`/account`): new members see a "Complete your profile" prompt. Only **full name, state and LGA** are required; everything else is optional. Edit details, see logged-in devices, log out. People stay logged in until they log out.
 
@@ -9,7 +9,8 @@ A volunteer website with:
 State → LGA → ward → polling unit are searchable lists built from INEC's data (176,846 polling units, 8,810 wards, 774 LGAs) in `public/geo/`. **Find polling units near me** uses the phone's location to suggest the closest polling units (INEC has GPS for about 163,000 of them) and fills in state, LGA, ward and unit in one tap. INEC's coordinates are occasionally wrong, so each suggestion shows its ward and LGA.
 
 ### Sign-in by phone (SMS)
-Texting codes costs money with every provider (roughly ₦5–₦25 per text). The app supports:
+Texting codes costs money with every provider. The app supports:
+- **Message Central VerifyNow** (no Sender ID or CAC needed): set `MC_CUSTOMER_ID` and `MC_PASSWORD` from console.messagecentral.com. New accounts get free test credits; Nigeria is listed from about $0.005–$0.009 per code. Set `MC_FLOW=WHATSAPP` to send codes by WhatsApp instead of SMS. Message Central creates and checks the code; the site never sees it.
 - **Termii** (Nigerian): set `TERMII_API_KEY` and `TERMII_SENDER_ID` (request a Sender ID in the Termii dashboard under *Sender IDs*). Uses the `dnd` channel by default so codes reach numbers on Do-Not-Disturb.
 - **Twilio**: set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`.
 

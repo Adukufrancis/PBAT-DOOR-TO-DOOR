@@ -153,11 +153,18 @@ app.post('/api/auth/start', h(async (req, res) => {
   }
 
   const code = crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
-  await store.upsertCode(id.value, id.type, sha256(`${id.value}:${code}`), now + CODE_TTL_MS, now);
+  const managed = id.type === 'phone' && sms.managed;     // provider creates and checks the code itself
 
   try {
-    if (id.type === 'email') await mailer.send(id.value, code);
-    else await sms.send(id.value, code);
+    if (managed) {
+      // Remember the provider's reference instead of a code hash.
+      const ref = await sms.start(id.value);
+      await store.upsertCode(id.value, id.type, `ext:${ref}`, now + CODE_TTL_MS, now);
+    } else {
+      await store.upsertCode(id.value, id.type, sha256(`${id.value}:${code}`), now + CODE_TTL_MS, now);
+      if (id.type === 'email') await mailer.send(id.value, code);
+      else await sms.send(id.value, code);
+    }
   } catch (err) {
     console.error(`${id.type === 'email' ? 'Email' : 'SMS'} send failed:`, err.message);
     await store.deleteCode(id.value);
@@ -168,7 +175,11 @@ app.post('/api/auth/start', h(async (req, res) => {
     });
   }
 
-  const body = { ok: true, type: id.type, identifier: id.value, sentTo: mask(id), cooldown: RESEND_COOLDOWN_MS / 1000 };
+  const body = {
+    ok: true, type: id.type, identifier: id.value, sentTo: mask(id), cooldown: RESEND_COOLDOWN_MS / 1000,
+    via: id.type === 'email' ? 'email' : (sms.via || 'sms'),
+    expiresMinutes: managed ? null : CODE_TTL_MS / 60000,
+  };
   // Without a provider in development, hand the code to the UI so the flow can be tested.
   const noProvider = id.type === 'email' ? !mailer.provider : !sms.provider;
   if (noProvider && !IS_PROD) body.devCode = code;
@@ -192,7 +203,22 @@ app.post('/api/auth/verify', h(async (req, res) => {
     await store.deleteCode(id.value);
     return res.status(429).json({ error: 'Too many wrong attempts. Request a new code.', expired: true });
   }
-  if (!safeEqual(sha256(`${id.value}:${code}`), row.code_hash)) {
+  let result;
+  if (row.code_hash.startsWith('ext:')) {
+    // Code was created by the SMS provider: ask them whether it's right.
+    try { result = await sms.check(id.value, row.code_hash.slice(4), code); }
+    catch (err) {
+      console.error('SMS verify failed:', err.message);
+      return res.status(502).json({ error: "We couldn't check the code right now. Please try again in a moment." });
+    }
+    if (result === 'expired') {
+      await store.deleteCode(id.value);
+      return res.status(400).json({ error: 'That code has expired. Request a new one.', expired: true });
+    }
+  } else {
+    result = safeEqual(sha256(`${id.value}:${code}`), row.code_hash) ? 'ok' : 'wrong';
+  }
+  if (result !== 'ok') {
     await store.bumpAttempts(id.value);
     const left = CODE_MAX_ATTEMPTS - row.attempts - 1;
     return res.status(400).json({

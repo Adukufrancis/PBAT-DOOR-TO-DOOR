@@ -26,7 +26,12 @@ services:
         sync: false
       - key: GMAIL_SCRIPT_SECRET
         sync: false
-      # SMS (optional, paid per text): Termii (Nigeria) or Twilio. Without one, sign-in by phone is off.
+      # Phone codes without CAC: Message Central VerifyNow (console.messagecentral.com).
+      - key: MC_CUSTOMER_ID
+        sync: false
+      - key: MC_PASSWORD
+        sync: false
+      # SMS alternatives that need your own approved Sender ID: Termii (Nigeria) or Twilio.
       - key: TERMII_API_KEY
         sync: false
       - key: TERMII_SENDER_ID
