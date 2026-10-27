@@ -43,7 +43,7 @@ export function showStep(id) { $$('.step').forEach((s) => s.classList.toggle('ac
 // Logged out: "Log in" + "Join now". Logged in: one profile button with a menu.
 // Phones: a menu button opens a drawer with the same links and actions.
 const initials = (m) => (m.full_name || '').split(/\s+/).filter(Boolean).map((w) => w[0]).slice(0, 2).join('').toUpperCase()
-  || (m.email || m.phone || '?').replace(/^\+234/, '0')[0].toUpperCase();
+  || (m.email ? m.email[0].toUpperCase() : '👤');
 const firstName = (m) => (m.full_name || '').split(/\s+/)[0] || 'Account';
 const contactOf = (m) => (m.emailVerified ? m.email : prettyPhone(m.phone)) || m.email || prettyPhone(m.phone);
 
