@@ -147,6 +147,111 @@ app.get('/api/options', (req, res) =>
     firebase: FIREBASE ? { apiKey: FIREBASE.apiKey, authDomain: FIREBASE.authDomain, projectId: FIREBASE.projectId, sdk: FIREBASE.sdk } : null,
   }));
 
+// ---- Sending and checking 6-digit codes (used for sign-in and for linking a contact) ----
+// `key` is where the code is stored: the email/phone itself for sign-in, `link:<member>:<value>` for linking.
+async function sendCode(req, key, id) {
+  const existing = await store.getCode(key);
+  const now = Date.now();
+  if (existing && now - existing.sent_at < RESEND_COOLDOWN_MS) {
+    const wait = Math.ceil((RESEND_COOLDOWN_MS - (now - existing.sent_at)) / 1000);
+    return { status: 429, body: { error: `Please wait ${wait}s before requesting another code.`, retryAfter: wait } };
+  }
+  if (!ipAllowed(req.ip)) {
+    return { status: 429, body: { error: 'Too many codes requested from this connection. Try again in an hour.' } };
+  }
+  const code = crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
+  const managed = id.type === 'phone' && sms.managed;     // provider creates and checks the code itself
+  try {
+    if (managed) {
+      const ref = await sms.start(id.value);              // remember the provider's reference, not a code hash
+      await store.upsertCode(key, id.type, `ext:${ref}`, now + CODE_TTL_MS, now);
+    } else {
+      await store.upsertCode(key, id.type, sha256(`${key}:${code}`), now + CODE_TTL_MS, now);
+      if (id.type === 'email') await mailer.send(id.value, code);
+      else await sms.send(id.value, code);
+    }
+  } catch (err) {
+    console.error(`${id.type === 'email' ? 'Email' : 'SMS'} send failed:`, err.message);
+    await store.deleteCode(key);
+    return { status: 502, body: { error: id.type === 'email'
+      ? "We couldn't send the email. Check the address and try again shortly."
+      : "We couldn't send the text message. Check the number, or use your email instead." } };
+  }
+  const body = {
+    ok: true, type: id.type, identifier: id.value, sentTo: mask(id), cooldown: RESEND_COOLDOWN_MS / 1000,
+    via: id.type === 'email' ? 'email' : (sms.via || 'sms'),
+    expiresMinutes: managed ? null : CODE_TTL_MS / 60000,
+  };
+  // Without a provider in development, hand the code to the UI so the flow can be tested.
+  const noProvider = id.type === 'email' ? !mailer.provider : !sms.provider;
+  if (noProvider && !IS_PROD) body.devCode = code;
+  return { status: 200, body };
+}
+
+/** Returns null when the code is right (and burns it), otherwise { status, body } to send back. */
+async function checkCode(key, id, code) {
+  const row = await store.getCode(key);
+  if (!row || row.expires_at < Date.now()) {
+    if (row) await store.deleteCode(key);
+    return { status: 400, body: { error: 'That code has expired. Request a new one.', expired: true } };
+  }
+  if (row.attempts >= CODE_MAX_ATTEMPTS) {
+    await store.deleteCode(key);
+    return { status: 429, body: { error: 'Too many wrong attempts. Request a new code.', expired: true } };
+  }
+  let result;
+  if (row.code_hash.startsWith('ext:')) {
+    try { result = await sms.check(id.value, row.code_hash.slice(4), code); }
+    catch (err) {
+      console.error('SMS verify failed:', err.message);
+      return { status: 502, body: { error: "We couldn't check the code right now. Please try again in a moment." } };
+    }
+    if (result === 'expired') {
+      await store.deleteCode(key);
+      return { status: 400, body: { error: 'That code has expired. Request a new one.', expired: true } };
+    }
+  } else {
+    result = safeEqual(sha256(`${key}:${code}`), row.code_hash) ? 'ok' : 'wrong';
+  }
+  if (result !== 'ok') {
+    await store.bumpAttempts(key);
+    const left = CODE_MAX_ATTEMPTS - row.attempts - 1;
+    return { status: 400, body: {
+      error: left > 0 ? `Incorrect code. ${left} attempt${left === 1 ? '' : 's'} left.` : 'Too many wrong attempts. Request a new code.',
+      expired: left <= 0,
+    } };
+  }
+  await store.deleteCode(key);                            // single use
+  return null;
+}
+
+/** Google-signed Firebase token -> verified Nigerian phone number, or { status, body } on failure. */
+async function phoneFromFirebase(idToken) {
+  if (!FIREBASE) return { fail: { status: 404, body: { error: 'Phone sign-in is not set up.' } } };
+  let payload;
+  try {
+    ({ payload } = await jwtVerify(String(idToken || ''), firebaseKeys, {
+      issuer: `https://securetoken.google.com/${FIREBASE.projectId}`, audience: FIREBASE.projectId,
+    }));
+  } catch (err) {
+    console.error('Firebase token rejected:', err.code || err.message);
+    return { fail: { status: 401, body: { error: "We couldn't confirm your phone number. Please try again." } } };
+  }
+  const phone = normalizePhone(payload.phone_number);
+  if (!phone || payload.firebase?.sign_in_provider !== 'phone') {
+    return { fail: { status: 400, body: { error: 'Please use a Nigerian phone number.' } } };
+  }
+  return { phone };
+}
+
+async function startSession(req, res, member, isNew) {
+  const now = Date.now();
+  const token = crypto.randomBytes(32).toString('base64url');
+  await store.insertSession(sha256(token), member.id, now, String(req.get('user-agent') || '').slice(0, 200));
+  setSessionCookie(res, token);
+  res.json({ member: publicMember(member), isNew, needsProfile: !member.consent_at });
+}
+
 // Step 1 (sign up AND log in): email or phone -> code
 app.post('/api/auth/start', h(async (req, res) => {
   const id = parseIdentifier(req.body.identifier);
@@ -156,49 +261,8 @@ app.post('/api/auth/start', h(async (req, res) => {
   if (id.type === 'phone' && !SMS_ENABLED) {
     return res.status(503).json({ error: "Sign-in by phone isn't available yet. Please use your email address.", code: 'sms_off' });
   }
-
-  const existing = await store.getCode(id.value);
-  const now = Date.now();
-  if (existing && now - existing.sent_at < RESEND_COOLDOWN_MS) {
-    const wait = Math.ceil((RESEND_COOLDOWN_MS - (now - existing.sent_at)) / 1000);
-    return res.status(429).json({ error: `Please wait ${wait}s before requesting another code.`, retryAfter: wait });
-  }
-  if (!ipAllowed(req.ip)) {
-    return res.status(429).json({ error: 'Too many codes requested from this connection. Try again in an hour.' });
-  }
-
-  const code = crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
-  const managed = id.type === 'phone' && sms.managed;     // provider creates and checks the code itself
-
-  try {
-    if (managed) {
-      // Remember the provider's reference instead of a code hash.
-      const ref = await sms.start(id.value);
-      await store.upsertCode(id.value, id.type, `ext:${ref}`, now + CODE_TTL_MS, now);
-    } else {
-      await store.upsertCode(id.value, id.type, sha256(`${id.value}:${code}`), now + CODE_TTL_MS, now);
-      if (id.type === 'email') await mailer.send(id.value, code);
-      else await sms.send(id.value, code);
-    }
-  } catch (err) {
-    console.error(`${id.type === 'email' ? 'Email' : 'SMS'} send failed:`, err.message);
-    await store.deleteCode(id.value);
-    return res.status(502).json({
-      error: id.type === 'email'
-        ? "We couldn't send the email. Check the address and try again shortly."
-        : "We couldn't send the text message. Check the number, or use your email instead.",
-    });
-  }
-
-  const body = {
-    ok: true, type: id.type, identifier: id.value, sentTo: mask(id), cooldown: RESEND_COOLDOWN_MS / 1000,
-    via: id.type === 'email' ? 'email' : (sms.via || 'sms'),
-    expiresMinutes: managed ? null : CODE_TTL_MS / 60000,
-  };
-  // Without a provider in development, hand the code to the UI so the flow can be tested.
-  const noProvider = id.type === 'email' ? !mailer.provider : !sms.provider;
-  if (noProvider && !IS_PROD) body.devCode = code;
-  res.json(body);
+  const { status, body } = await sendCode(req, id.value, id);
+  res.status(status).json(body);
 }));
 
 // Step 2: confirm the code -> log in (creating the account the first time)
@@ -208,73 +272,18 @@ app.post('/api/auth/verify', h(async (req, res) => {
   if (!id || code.length !== 6) {
     return res.status(400).json({ error: 'Enter the 6-digit code we sent you.' });
   }
-
-  const row = await store.getCode(id.value);
-  if (!row || row.expires_at < Date.now()) {
-    if (row) await store.deleteCode(id.value);
-    return res.status(400).json({ error: 'That code has expired. Request a new one.', expired: true });
-  }
-  if (row.attempts >= CODE_MAX_ATTEMPTS) {
-    await store.deleteCode(id.value);
-    return res.status(429).json({ error: 'Too many wrong attempts. Request a new code.', expired: true });
-  }
-  let result;
-  if (row.code_hash.startsWith('ext:')) {
-    // Code was created by the SMS provider: ask them whether it's right.
-    try { result = await sms.check(id.value, row.code_hash.slice(4), code); }
-    catch (err) {
-      console.error('SMS verify failed:', err.message);
-      return res.status(502).json({ error: "We couldn't check the code right now. Please try again in a moment." });
-    }
-    if (result === 'expired') {
-      await store.deleteCode(id.value);
-      return res.status(400).json({ error: 'That code has expired. Request a new one.', expired: true });
-    }
-  } else {
-    result = safeEqual(sha256(`${id.value}:${code}`), row.code_hash) ? 'ok' : 'wrong';
-  }
-  if (result !== 'ok') {
-    await store.bumpAttempts(id.value);
-    const left = CODE_MAX_ATTEMPTS - row.attempts - 1;
-    return res.status(400).json({
-      error: left > 0 ? `Incorrect code. ${left} attempt${left === 1 ? '' : 's'} left.` : 'Too many wrong attempts. Request a new code.',
-      expired: left <= 0,
-    });
-  }
-
-  // Code is good: single use.
-  await store.deleteCode(id.value);
-
-  const now = Date.now();
-  const { member, isNew } = await store.signInWith(id.type, id.value, now);
-  const token = crypto.randomBytes(32).toString('base64url');
-  await store.insertSession(sha256(token), member.id, now, String(req.get('user-agent') || '').slice(0, 200));
-  setSessionCookie(res, token);
-  res.json({ member: publicMember(member), isNew, needsProfile: !member.consent_at });
+  const fail = await checkCode(id.value, id, code);
+  if (fail) return res.status(fail.status).json(fail.body);
+  const { member, isNew } = await store.signInWith(id.type, id.value, Date.now());
+  await startSession(req, res, member, isNew);
 }));
 
 // Phone sign-in finished in the browser with Firebase: check Google's signed token, then log in.
 app.post('/api/auth/firebase', h(async (req, res) => {
-  if (!FIREBASE) return res.status(404).json({ error: 'Phone sign-in is not set up.' });
-  let payload;
-  try {
-    ({ payload } = await jwtVerify(String(req.body.idToken || ''), firebaseKeys, {
-      issuer: `https://securetoken.google.com/${FIREBASE.projectId}`, audience: FIREBASE.projectId,
-    }));
-  } catch (err) {
-    console.error('Firebase token rejected:', err.code || err.message);
-    return res.status(401).json({ error: "We couldn't confirm your phone number. Please try again." });
-  }
-  const phone = normalizePhone(payload.phone_number);
-  if (!phone || payload.firebase?.sign_in_provider !== 'phone') {
-    return res.status(400).json({ error: 'Please use a Nigerian phone number.' });
-  }
-  const now = Date.now();
-  const { member, isNew } = await store.signInWith('phone', phone, now);
-  const token = crypto.randomBytes(32).toString('base64url');
-  await store.insertSession(sha256(token), member.id, now, String(req.get('user-agent') || '').slice(0, 200));
-  setSessionCookie(res, token);
-  res.json({ member: publicMember(member), isNew, needsProfile: !member.consent_at });
+  const { phone, fail } = await phoneFromFirebase(req.body.idToken);
+  if (fail) return res.status(fail.status).json(fail.body);
+  const { member, isNew } = await store.signInWith('phone', phone, Date.now());
+  await startSession(req, res, member, isNew);
 }));
 
 // Who am I?
@@ -314,19 +323,64 @@ app.post('/api/me', h(async (req, res) => {
 
   if (!m.phone_verified && phone !== (m.phone || null)) {
     if (phone && !(await store.setContact(m.id, 'phone', phone))) {
-      return res.status(409).json({ error: 'Please fix the highlighted fields.', fields: { phone: 'This number is already registered to another member.' } });
+      return res.status(409).json({ error: 'Please fix the highlighted fields.', fields: { phone: 'This number already has its own account. Use "Link" under Sign-in methods to prove it\'s yours and join the two accounts.' } });
     }
     if (!phone) await store.setContact(m.id, 'phone', null);
   }
   if (!m.email_verified && email !== (m.email || null)) {
     if (email && !(await store.setContact(m.id, 'email', email))) {
-      return res.status(409).json({ error: 'Please fix the highlighted fields.', fields: { email: 'This email is already registered to another member.' } });
+      return res.status(409).json({ error: 'Please fix the highlighted fields.', fields: { email: 'This email already has its own account. Use "Link" under Sign-in methods to prove it\'s yours and join the two accounts.' } });
     }
     if (!email) await store.setContact(m.id, 'email', null);
   }
 
   await store.updateProfile(m.id, profile, Date.now());
   res.json({ member: publicMember(await store.memberById(m.id)) });
+}));
+
+// ---- Linking a second email/phone to my account ------------------------------
+// The member proves they own the contact with a code. If it already belongs to another
+// account (e.g. they joined once by phone and once by email), the two accounts are merged.
+async function finishLink(res, m, type, value) {
+  const r = await store.linkContact(m.id, type, value);
+  if (r.conflict) {
+    return res.status(409).json({ error: `That ${type === 'email' ? 'email' : 'number'} belongs to an account that already has a different ${type === 'email' ? 'phone number' : 'email'}. Log in with it instead, or contact the team to merge.` });
+  }
+  res.json({ member: publicMember(await store.memberById(r.memberId)), merged: r.merged });
+}
+const linkKey = (m, id) => `link:${m.id}:${id.value}`;
+
+app.post('/api/me/link/start', h(async (req, res) => {
+  const m = req.member;
+  if (!m) return res.status(401).json({ error: 'Please log in.' });
+  const id = parseIdentifier(req.body.identifier);
+  if (!id) return res.status(400).json({ error: 'Enter a valid email address or Nigerian phone number.' });
+  if ((id.type === 'email' && m.email_verified) || (id.type === 'phone' && m.phone_verified)) {
+    return res.status(400).json({ error: `Your account already has a verified ${id.type === 'email' ? 'email' : 'phone number'}.` });
+  }
+  if (id.type === 'phone' && !SMS_ENABLED) return res.status(503).json({ error: "Phone codes aren't available yet." });
+  const { status, body } = await sendCode(req, linkKey(m, id), id);
+  res.status(status).json(body);
+}));
+
+app.post('/api/me/link/verify', h(async (req, res) => {
+  const m = req.member;
+  if (!m) return res.status(401).json({ error: 'Please log in.' });
+  const id = parseIdentifier(req.body.identifier);
+  const code = String(req.body.code || '').replace(/\D/g, '');
+  if (!id || code.length !== 6) return res.status(400).json({ error: 'Enter the 6-digit code we sent you.' });
+  const fail = await checkCode(linkKey(m, id), id, code);
+  if (fail) return res.status(fail.status).json(fail.body);
+  await finishLink(res, m, id.type, id.value);
+}));
+
+app.post('/api/me/link/firebase', h(async (req, res) => {
+  const m = req.member;
+  if (!m) return res.status(401).json({ error: 'Please log in.' });
+  if (m.phone_verified) return res.status(400).json({ error: 'Your account already has a verified phone number.' });
+  const { phone, fail } = await phoneFromFirebase(req.body.idToken);
+  if (fail) return res.status(fail.status).json(fail.body);
+  await finishLink(res, m, 'phone', phone);
 }));
 
 // Log out this device

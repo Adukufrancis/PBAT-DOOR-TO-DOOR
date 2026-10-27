@@ -81,6 +81,13 @@ const QUERIES = {
   verifyPhone: 'UPDATE members SET phone_verified = 1 WHERE id = $1 AND phone = $2',
   setEmail: 'UPDATE members SET email = $2, email_verified = 0 WHERE id = $1 AND email_verified = 0',
   setPhone: 'UPDATE members SET phone = $2, phone_verified = 0 WHERE id = $1 AND phone_verified = 0',
+  linkEmail: 'UPDATE members SET email = $2, email_verified = 1 WHERE id = $1',
+  linkPhone: 'UPDATE members SET phone = $2, phone_verified = 1 WHERE id = $1',
+  moveSessions: 'UPDATE member_sessions SET member_id = $2 WHERE member_id = $1',
+  deleteMember: 'DELETE FROM members WHERE id = $1',
+  mergeInto: `UPDATE members SET email = $2, email_verified = $3, phone = $4, phone_verified = $5,
+                ${PROFILE_FIELDS.map((f, i) => `${f} = $${i + 6}`).join(', ')},
+                consent_at = $${PROFILE_FIELDS.length + 6}, created_at = $${PROFILE_FIELDS.length + 7} WHERE id = $1`,
   updateProfile: `UPDATE members SET ${PROFILE_FIELDS.map((f, i) => `${f} = $${i + 2}`).join(', ')},
                     consent_at = COALESCE(consent_at, $${PROFILE_FIELDS.length + 2}) WHERE id = $1`,
 
@@ -172,6 +179,36 @@ export async function createStore() {
       if (owner && owner.id === memberId) return true;
       await raw.q(type === 'email' ? 'setEmail' : 'setPhone', [memberId, value]);
       return true;
+    },
+
+    /**
+     * The member proved they own this email/phone. Attach it to their account; if another account
+     * already signs in with it, merge the two (the older account is kept, sessions move with it).
+     */
+    async linkContact(memberId, type, value) {
+      const owner = await byVerified(type, value);
+      if (owner && owner.id === memberId) return { memberId, merged: false };
+      if (!owner) {
+        await raw.q(type === 'email' ? 'releaseUnverifiedEmail' : 'releaseUnverifiedPhone', [value]);
+        await raw.q(type === 'email' ? 'linkEmail' : 'linkPhone', [memberId, value]);
+        return { memberId, merged: false };
+      }
+      const me = await one('memberById', [memberId]);
+      const [keep, drop] = owner.id < me.id ? [owner, me] : [me, owner];
+      const pick = (t) => {
+        const a = keep[`${t}_verified`] ? keep[t] : null, b = drop[`${t}_verified`] ? drop[t] : null;
+        if (a && b && a !== b) return null;                      // two different verified contacts: can't merge
+        return a || b ? [a || b, 1] : [keep[t] || drop[t] || null, 0];
+      };
+      const email = pick('email'), phone = pick('phone');
+      if (!email || !phone) return { conflict: true };
+      const consents = [keep.consent_at, drop.consent_at].filter((x) => x != null);
+      await raw.q('moveSessions', [drop.id, keep.id]);
+      await raw.q('deleteMember', [drop.id]);                  // frees its verified contacts for the keeper
+      await raw.q('mergeInto', [keep.id, email[0], email[1], phone[0], phone[1],
+        ...PROFILE_FIELDS.map((f) => keep[f] || drop[f] || ''),
+        consents.length ? Math.min(...consents) : null, Math.min(keep.created_at, drop.created_at)]);
+      return { memberId: keep.id, merged: true };
     },
 
     updateProfile: (id, profile, now) =>
