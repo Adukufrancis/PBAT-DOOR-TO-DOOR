@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import compression from 'compression';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -29,7 +30,17 @@ const store = await createStore();
 const mailer = createMailer();
 const sms = createSms();
 // Phone sign-in works in development (codes go to the console) and in production once an SMS provider is set.
-const SMS_ENABLED = Boolean(sms.provider) || !IS_PROD;
+// Google Firebase phone sign-in: Google sends the code (no Sender ID / CAC). The browser does the
+// code step with Firebase, then hands us a signed ID token proving the number; we verify it here.
+const FIREBASE = process.env.FIREBASE_API_KEY && process.env.FIREBASE_PROJECT_ID ? {
+  apiKey: process.env.FIREBASE_API_KEY.trim(),
+  projectId: process.env.FIREBASE_PROJECT_ID.trim(),
+  authDomain: (process.env.FIREBASE_AUTH_DOMAIN || `${process.env.FIREBASE_PROJECT_ID.trim()}.firebaseapp.com`).trim(),
+  sdk: (process.env.FIREBASE_SDK_URL || 'https://www.gstatic.com/firebasejs/10.12.2').replace(/\/+$/, ''),
+} : null;
+const firebaseKeys = FIREBASE && createRemoteJWKSet(new URL(process.env.FIREBASE_JWKS_URL
+  || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com'));
+const SMS_ENABLED = Boolean(FIREBASE || sms.provider) || !IS_PROD;
 
 if (IS_PROD && store.kind !== 'postgres') {
   console.warn('WARNING: running in production without DATABASE_URL. On hosts with a temporary disk ' +
@@ -38,7 +49,7 @@ if (IS_PROD && store.kind !== 'postgres') {
 if (IS_PROD && !mailer.provider) {
   console.warn('WARNING: no email provider configured (BREVO_API_KEY, GMAIL_SCRIPT_URL, RESEND_API_KEY or SMTP_HOST).');
 }
-if (IS_PROD && !sms.provider) {
+if (IS_PROD && !sms.provider && !FIREBASE) {
   console.warn('NOTE: no SMS provider configured (TERMII_API_KEY or TWILIO_*). Phone sign-in is off; email still works.');
 }
 
@@ -130,7 +141,11 @@ app.use(h(async (req, res, next) => {
 
 // Options for the forms, so the browser and server use the same lists.
 app.get('/api/options', (req, res) =>
-  res.json({ states: STATES, genders: GENDERS, interests: INTERESTS, sms: SMS_ENABLED }));
+  res.json({
+    states: STATES, genders: GENDERS, interests: INTERESTS, sms: SMS_ENABLED,
+    phoneVia: FIREBASE && !sms.provider ? 'firebase' : 'server',
+    firebase: FIREBASE ? { apiKey: FIREBASE.apiKey, authDomain: FIREBASE.authDomain, projectId: FIREBASE.projectId, sdk: FIREBASE.sdk } : null,
+  }));
 
 // Step 1 (sign up AND log in): email or phone -> code
 app.post('/api/auth/start', h(async (req, res) => {
@@ -232,6 +247,30 @@ app.post('/api/auth/verify', h(async (req, res) => {
 
   const now = Date.now();
   const { member, isNew } = await store.signInWith(id.type, id.value, now);
+  const token = crypto.randomBytes(32).toString('base64url');
+  await store.insertSession(sha256(token), member.id, now, String(req.get('user-agent') || '').slice(0, 200));
+  setSessionCookie(res, token);
+  res.json({ member: publicMember(member), isNew, needsProfile: !member.consent_at });
+}));
+
+// Phone sign-in finished in the browser with Firebase: check Google's signed token, then log in.
+app.post('/api/auth/firebase', h(async (req, res) => {
+  if (!FIREBASE) return res.status(404).json({ error: 'Phone sign-in is not set up.' });
+  let payload;
+  try {
+    ({ payload } = await jwtVerify(String(req.body.idToken || ''), firebaseKeys, {
+      issuer: `https://securetoken.google.com/${FIREBASE.projectId}`, audience: FIREBASE.projectId,
+    }));
+  } catch (err) {
+    console.error('Firebase token rejected:', err.code || err.message);
+    return res.status(401).json({ error: "We couldn't confirm your phone number. Please try again." });
+  }
+  const phone = normalizePhone(payload.phone_number);
+  if (!phone || payload.firebase?.sign_in_provider !== 'phone') {
+    return res.status(400).json({ error: 'Please use a Nigerian phone number.' });
+  }
+  const now = Date.now();
+  const { member, isNew } = await store.signInWith('phone', phone, now);
   const token = crypto.randomBytes(32).toString('base64url');
   await store.insertSession(sha256(token), member.id, now, String(req.get('user-agent') || '').slice(0, 200));
   setSessionCookie(res, token);
@@ -358,5 +397,5 @@ app.use((err, req, res, next) => {
 setInterval(() => store.purgeCodes(Date.now()).catch(() => {}), 15 * 60 * 1000).unref();
 
 app.listen(PORT, () => {
-  console.log(`Running at http://localhost:${PORT}  (db: ${store.kind}, email: ${mailer.provider || 'console (dev)'}, sms: ${sms.provider || (IS_PROD ? 'off' : 'console (dev)')})`);
+  console.log(`Running at http://localhost:${PORT}  (db: ${store.kind}, email: ${mailer.provider || 'console (dev)'}, sms: ${sms.provider || (FIREBASE ? 'firebase' : IS_PROD ? 'off' : 'console (dev)')})`);
 });

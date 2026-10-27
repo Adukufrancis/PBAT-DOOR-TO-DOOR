@@ -10,7 +10,9 @@ State → LGA → ward → polling unit are searchable lists built from INEC's d
 
 ### Sign-in by phone (SMS)
 Texting codes costs money with every provider. The app supports:
+- **Google Firebase** (recommended, no Sender ID or CAC): set `FIREBASE_API_KEY` and `FIREBASE_PROJECT_ID`. The browser does the code step with Firebase (with an invisible reCAPTCHA) and sends the server a Google-signed token, which the server verifies before logging the member in. Add your site's domain under Firebase Authentication > Settings > Authorized domains.
 - **Message Central VerifyNow** (no Sender ID or CAC needed): set `MC_CUSTOMER_ID` and `MC_PASSWORD` from console.messagecentral.com. New accounts get free test credits; Nigeria is listed from about $0.005–$0.009 per code. Set `MC_FLOW=WHATSAPP` to send codes by WhatsApp instead of SMS. Message Central creates and checks the code; the site never sees it.
+- **DageSMS** (no CAC, Naira, no subscription): set `DAGESMS_API_KEY` (and `DAGESMS_SENDER` if they give you a shared sender name other than `DageSMS`). Uses the corporate route so codes reach DND numbers.
 - **Termii** (Nigerian): set `TERMII_API_KEY` and `TERMII_SENDER_ID` (request a Sender ID in the Termii dashboard under *Sender IDs*). Uses the `dnd` channel by default so codes reach numbers on Do-Not-Disturb.
 - **Twilio**: set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`.
 
