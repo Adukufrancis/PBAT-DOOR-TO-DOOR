@@ -68,7 +68,7 @@
       <button class="btn block" id="send" type="submit" style="margin-top:16px"><span class="spinner"></span><span>Continue</span></button>
       <div class="msg err" id="id-err"></div>
       <div id="recaptcha"></div>
-      <p class="switch" style="font-size:13px">No password needed. You'll stay logged in on this device until you log out.</p>
+      <p class="switch" style="font-size:13px">No password needed. You'll stay logged in on this device until you log out. <span style="opacity:.5">v3</span></p>
     </form>
 
     <!-- Step 2: code -->
@@ -126,7 +126,12 @@
     'auth/invalid-app-credential': 'The security check failed. Please reload the page and try again.',
     'auth/unauthorized-domain': 'Phone sign-in isn\'t switched on for this website yet. Please use your email for now.',
     'auth/network-request-failed': 'No connection. Check your internet and try again.',
-  }[e?.code] || 'We couldn\'t send the text message. Please try again, or use your email.');
+    'auth/billing-not-enabled': 'Phone sign-in needs billing switched on in Firebase (Blaze plan). Please use your email for now.',
+    'auth/operation-not-allowed': 'Phone sign-in isn\'t switched on in Firebase yet. Please use your email for now.',
+    'auth/admin-restricted-operation': 'Phone sign-in isn\'t switched on in Firebase yet. Please use your email for now.',
+    'auth/invalid-api-key': 'Phone sign-in isn\'t set up correctly (API key). Please use your email for now.',
+    'auth/api-key-not-valid.-please-pass-a-valid-api-key.': 'Phone sign-in isn\'t set up correctly (API key). Please use your email for now.',
+  }[e?.code] || 'We couldn\'t send the text message. Please try again, or use your email.') + ` [${e?.code || e?.message || e || 'unknown'}]`;
 
   async function sendFirebase() {
     try {
