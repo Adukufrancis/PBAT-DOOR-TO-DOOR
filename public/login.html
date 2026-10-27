@@ -22,7 +22,8 @@
     </a>
     <div class="nav-links">
       <a href="/">Home</a>
-      <a href="/#about">About</a>
+      <a href="/#movement">Movement</a>
+      <a href="/#about">The President</a>
       <a href="/#works">His works</a>
       <a href="/#gallery">Gallery</a>
     </div>
@@ -108,8 +109,8 @@
       if (data.retryAfter) cooldown($('#resend'), data.retryAfter);
       return { error: data.error || 'Something went wrong.', retry: Boolean(data.retryAfter) };
     }
-    const how = data.type === 'email' ? 'email' : 'text message';
-    $('#sent-msg').textContent = `We sent a 6-digit code by ${how} to ${data.sentTo}. It expires in 10 minutes.`;
+    const how = { email: 'email', sms: 'text message', whatsapp: 'WhatsApp' }[data.via] || 'text message';
+    $('#sent-msg').textContent = `We sent a 6-digit code by ${how} to ${data.sentTo}. ${data.expiresMinutes ? `It expires in ${data.expiresMinutes} minutes.` : 'Use it within a few minutes.'}`;
     devCodeNote($('#dev-note'), data.devCode);
     cooldown($('#resend'), data.cooldown);
     return {};

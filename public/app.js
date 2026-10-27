@@ -62,7 +62,7 @@ export async function mountNav({ member, page } = {}) {
   const auth = $('#nav-auth'), drawer = $('#nav-drawer'), toggle = $('#nav-toggle');
   // highlight "Home" on the home page (top of page only)
   const homeLink = $('.nav-links a[href="/"]', nav);
-  if (homeLink && location.pathname === '/') homeLink.setAttribute('aria-current', 'page');
+  if (homeLink && location.pathname === '/' && !location.hash) homeLink.setAttribute('aria-current', 'page');
   const links = $$('.nav-links a', nav).map((a) => `<a href="${a.getAttribute('href')}">${a.textContent}</a>`).join('');
 
   if (member) {

@@ -6,6 +6,7 @@ const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 export function startMotion() {
   document.documentElement.classList.add('motion');
   progressBar();
+  scrollSpy();
   if (reduce) { document.querySelectorAll('.timeline li').forEach((li) => li.classList.add('lit')); document.querySelector('.timeline')?.style.setProperty('--fill', '100%'); document.querySelectorAll('.reveal').forEach((el) => el.classList.add('in')); return; }
   reveal();
   typewriter();
@@ -122,4 +123,20 @@ function timelineFill() {
     items.forEach((li) => li.classList.toggle('lit', li.getBoundingClientRect().top + 10 < mark));
   };
   addEventListener('scroll', update, { passive: true }); addEventListener('resize', update); update();
+}
+
+// Header highlights the section you're reading (Home at the top).
+function scrollSpy() {
+  const links = [...document.querySelectorAll('.nav-links a')];
+  const byId = Object.fromEntries(links.map((a) => [a.getAttribute('href').split('#')[1] || 'top', a]));
+  const sections = ['movement', 'about', 'works', 'gallery'].map((id) => document.getElementById(id)).filter(Boolean);
+  const update = () => {
+    const mark = innerHeight * 0.35;
+    let current = 'top';
+    for (const s of sections) if (s.getBoundingClientRect().top < mark) current = s.id;
+    if (current !== 'top' && sections.find((s) => s.id === current).getBoundingClientRect().bottom < mark) current = 'none';
+    links.forEach((a) => a.removeAttribute('aria-current'));
+    (byId[current] || (current === 'top' ? byId.top : null))?.setAttribute('aria-current', 'page');
+  };
+  addEventListener('scroll', update, { passive: true }); update();
 }

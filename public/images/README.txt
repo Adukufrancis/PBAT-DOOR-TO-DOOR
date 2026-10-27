@@ -6,3 +6,5 @@ Put your own photos here to replace the default Wikimedia Commons images:
 
 Any photo you add here is used automatically. If a file is missing, the site
 falls back to the Wikimedia Commons photo. Only use photos you have the right to use.
+
+  tompolo.jpg     Photo of Tompolo for "The movement" section (portrait shape, about 4:5)
