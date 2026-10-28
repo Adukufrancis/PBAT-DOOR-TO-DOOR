@@ -585,3 +585,12 @@ export async function mountFooter() {
   fillSite(box);
   renderSocial(box);
 }
+
+// ---- Offline support ------------------------------------------------------------
+// The service worker (/sw.js) saves pages, styles and photos on the phone so the site keeps working
+// with poor or no signal. Registered on every page that loads this file.
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('/sw.js').catch(() => {}); });
+  window.addEventListener('offline', () => toast("You're offline. Pages you've opened before still work."));
+  window.addEventListener('online', () => toast('Back online.'));
+}

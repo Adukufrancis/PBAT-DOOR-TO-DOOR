@@ -500,6 +500,14 @@ app.get('/api/geo/near', (req, res) => {
 app.get(['/join', '/signup'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 app.get('/welcome', (req, res) => res.redirect(302, '/account'));
 app.use('/geo', express.static(GEO_DIR, { maxAge: '7d' }));
+// The service worker must never be cached, or phones would keep running an old version of it.
+app.get('/sw.js', (req, res) => {
+  res.set({ 'Cache-Control': 'no-cache', 'Service-Worker-Allowed': '/' });
+  res.sendFile(path.join(__dirname, 'public', 'sw.js'));
+});
+app.get('/site.webmanifest', (req, res) => {
+  res.type('application/manifest+json').sendFile(path.join(__dirname, 'public', 'site.webmanifest'));
+});
 // Photos and icons: let browsers keep them for a day instead of downloading them on every visit.
 app.use('/images', express.static(path.join(__dirname, 'public', 'images'), { maxAge: '1d' }));
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));

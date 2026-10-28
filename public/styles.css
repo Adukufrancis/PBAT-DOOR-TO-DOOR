@@ -683,3 +683,20 @@ footer.site .social-icon.soon { opacity: .45; }
 /* button that can't be used yet (e.g. until the agreement box is ticked) */
 .btn[aria-disabled="true"] { opacity: .45; filter: grayscale(.5); box-shadow: none; cursor: not-allowed; }
 .btn[aria-disabled="true"]:hover { transform: none; }
+
+/* =====================================================================
+   Offline page (shown by the service worker when there's no signal)
+   ===================================================================== */
+.offline { max-width: 720px; margin: 0 auto; padding: 32px 16px 48px; }
+.offline-head { display: grid; gap: 20px; }
+.offline-head img { width: 120px; height: auto; }
+.offline h1 { font-size: 32px; margin: 4px 0 8px; }
+.offline h2 { font-size: 20px; margin: 32px 0 12px; }
+.offline-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.talking-points { display: grid; gap: 12px; padding: 0; margin: 0; list-style: none; counter-reset: tp; }
+.talking-points li { counter-increment: tp; position: relative; padding: 14px 16px 14px 56px; background: #fff;
+  border-radius: 12px; box-shadow: 0 1px 0 rgba(6, 40, 22, .06), 0 6px 18px -12px rgba(6, 40, 22, .25); line-height: 1.5; }
+.talking-points li::before { content: counter(tp); position: absolute; left: 14px; top: 14px; width: 28px; height: 28px;
+  border-radius: 50%; display: grid; place-items: center; background: var(--green, #06492a); color: #fff; font-weight: 700; font-size: 14px; }
+.offline-help { margin-top: 24px; padding: 16px; border-radius: 12px; background: var(--green-soft, #e8f2ec); }
+.offline-help h2 { margin-top: 0; }
