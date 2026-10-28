@@ -262,7 +262,7 @@
   ];
 
   // ---- Gallery: your own campaign photos ----
-  // One line per photo, in order: public/images/gallery-1.jpg, gallery-2.jpg …
+  // One line per photo, in order: public/images/gallery-1.jpg, gallery-2.jpg … (a smaller gallery-N.webp copy is used first if present)
   // The first one is shown big. To add a photo, upload gallery-5.jpg and add a line here.
   // Captions: what, where, when, and the photographer's credit.
   const PHOTOS = [
@@ -311,7 +311,7 @@
   $('#gallery-grid').dataset.photos = PHOTOS.length;
   $('#gallery-grid').innerHTML = PHOTOS.map((p, i) => `
     <figure class="ph" data-initials="PBAT">
-      <img loading="lazy" alt="${esc(p.caption || 'PBAT Door to Door Movement event')}" data-sources="/images/gallery-${i + 1}.jpg">
+      <img fetchpriority="low" decoding="async" alt="${esc(p.caption || 'PBAT Door to Door Movement event')}" data-sources="/images/gallery-${i + 1}.webp|/images/gallery-${i + 1}.jpg">
       ${p.caption ? `<figcaption>${esc(p.caption)}</figcaption>` : ''}
     </figure>`).join('');
 

@@ -500,6 +500,8 @@ app.get('/api/geo/near', (req, res) => {
 app.get(['/join', '/signup'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 app.get('/welcome', (req, res) => res.redirect(302, '/account'));
 app.use('/geo', express.static(GEO_DIR, { maxAge: '7d' }));
+// Photos and icons: let browsers keep them for a day instead of downloading them on every visit.
+app.use('/images', express.static(path.join(__dirname, 'public', 'images'), { maxAge: '1d' }));
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 
 app.use((err, req, res, next) => {
