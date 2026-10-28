@@ -25,6 +25,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/styles.css">
+<link rel="preload" as="image" href="/images/hero.jpg" fetchpriority="high">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -65,7 +66,7 @@
     </div>
     <figure class="portrait" style="margin:0">
       <div class="frame ph" data-initials="BAT">
-        <img alt="President Bola Ahmed Tinubu" data-sources="/images/hero.jpg|https://commons.wikimedia.org/wiki/Special:FilePath/Bola_A_Tinubu_presidential_portrait_2023.jpg?width=900">
+        <img alt="President Bola Ahmed Tinubu" fetchpriority="high" decoding="async" data-sources="/images/hero.jpg|https://commons.wikimedia.org/wiki/Special:FilePath/Bola_A_Tinubu_presidential_portrait_2023.jpg?width=900">
       </div>
       <figcaption>
         <strong>President Bola Ahmed Tinubu, GCFR</strong>
