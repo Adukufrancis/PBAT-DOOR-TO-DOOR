@@ -55,8 +55,8 @@
 
     <!-- Step 1: email or phone -->
     <form class="card narrow step" id="s-id" novalidate>
-      <h1>Join or log in</h1>
-      <p class="sub">Enter your email or phone number. We'll send you a 6-digit code. New here? This creates your account.</p>
+      <h1 id="id-title">Join the movement</h1>
+      <p class="sub" id="id-sub">Enter your email or phone number. We'll send you a 6-digit code to confirm it's you.</p>
       <div class="field" data-field="identifier">
         <label for="identifier">Email or phone number</label>
         <input id="identifier" type="text" autocomplete="username" autocapitalize="off" spellcheck="false"
@@ -76,6 +76,7 @@
       <div class="msg err" id="id-err"></div>
       <div id="recaptcha"></div>
       <p class="switch" style="font-size:13px">No password needed. You'll stay logged in on this device until you log out.</p>
+      <p class="switch" id="mode-switch"></p>
     </form>
 
     <!-- Step 2: code -->
@@ -90,6 +91,16 @@
         <button type="button" class="linkish" id="back">← Use a different email or number</button>
         <button type="button" class="linkish" id="resend" disabled>Resend code</button>
       </div>
+    </form>
+
+    <!-- Step 3 (only for someone new who came in through "Log in"): agree before the account is made -->
+    <form class="card narrow step" id="s-agree" novalidate>
+      <h1>Welcome! You're new here</h1>
+      <p class="sub">We don't have an account for <b id="new-who"></b> yet. Tick the box to join the movement.</p>
+      <div id="agree-slot"></div>
+      <button class="btn block" id="join" type="submit" style="margin-top:16px"><span class="spinner"></span><span>Join the movement</span></button>
+      <div class="msg err" id="agree-err"></div>
+      <div class="row"><button type="button" class="linkish" id="back2">← Use a different email or number</button></div>
     </form>
   </div>
 </main>
@@ -111,10 +122,26 @@
     $('label[for="identifier"]').textContent = 'Email address';
     $('#identifier').placeholder = 'you@example.com';
   }
+  // /join shows the tick boxes straight away. /login doesn't: members already agreed when they joined.
+  const joining = /^\/(join|signup)/.test(location.pathname);
+  $('#id-title').textContent = joining ? 'Join the movement' : 'Log in';
+  $('#id-sub').textContent = joining
+    ? "Enter your email or phone number. We'll send you a 6-digit code to confirm it's you."
+    : "Enter the email or phone number you joined with. We'll send you a 6-digit code.";
+  $('#mode-switch').innerHTML = joining ? 'Already a member? <a href="/login">Log in</a>' : 'New here? <a href="/join">Join the movement</a>';
+  document.title = (joining ? 'Join' : 'Log in') + document.title.replace(/^[^·]*/, ' ');
+  if (!joining) $('#agree-slot').append($('[data-field="consent"]'));
   showStep('s-id'); $('#identifier').focus();
 
   // ---- Consent (required) and SMS opt-in (optional), sent with every sign-in step ----
   const consent = () => ({ consent: $('#agree').checked, sms: $('#sms-optin').checked });
+  const agreed = () => {
+    const cbox = $('[data-field="consent"]'), ok = $('#agree').checked;
+    cbox.classList.toggle('invalid', !ok);
+    $('.err', cbox).textContent = ok ? '' : 'Please tick the box to agree before continuing.';
+    if (!ok) $('#agree').focus();
+    return ok;
+  };
   $('#agree').addEventListener('change', () => $('[data-field="consent"]').classList.remove('invalid'));
 
   // ---- Optional Cloudflare Turnstile bot check (only when the site has keys set) ----
@@ -221,10 +248,7 @@
     field.classList.toggle('invalid', bad);
     $('.err', field).textContent = bad ? (value.includes('@') || !opts.sms ? 'Enter a valid email address.' : 'Enter a valid email or Nigerian phone number, e.g. 0803 123 4567.') : '';
     if (bad) return $('#identifier').focus();
-    const cbox = $('[data-field="consent"]');
-    cbox.classList.toggle('invalid', !$('#agree').checked);
-    $('.err', cbox).textContent = $('#agree').checked ? '' : 'Please tick the box to agree before continuing.';
-    if (!$('#agree').checked) return $('#agree').focus();
+    if (joining && !agreed()) return;
 
     identifier = value; message($('#id-err'), '');
     const btn = $('#send'); setLoading(btn, true);
@@ -250,8 +274,25 @@
       if (data.expired) { clearInterval($('#resend')._timer); $('#resend').disabled = false; $('#resend').textContent = 'Send a new code'; }
       return;
     }
+    if (data.needsConsent) {               // new person on the Log in page: ask them to agree first
+      pending = data.pending;
+      $('#new-who').textContent = identifier; message($('#agree-err'), '');
+      return showStep('s-agree');
+    }
     location.href = data.isNew ? '/account?welcome=1' : '/account';
   });
+
+  let pending = null;
+  $('#s-agree').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!agreed()) return;
+    const btn = $('#join'); setLoading(btn, true);
+    const { ok, data } = await api('/api/auth/join', { pending, ...consent() });
+    setLoading(btn, false);
+    if (!ok) return message($('#agree-err'), data.error || 'Something went wrong.');
+    location.href = data.isNew ? '/account?welcome=1' : '/account';
+  });
+  $('#back2').addEventListener('click', () => { showStep('s-id'); $('#identifier').focus(); });
 
   $('#resend').addEventListener('click', async () => {
     $('#resend').disabled = true; message($('#code-err'), '');

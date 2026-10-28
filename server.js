@@ -56,6 +56,26 @@ async function turnstileOk(token, ip) {
 }
 const CONSENT_ERROR = { error: 'Please tick the box to agree to the Privacy Policy and Terms.', field: 'consent' };
 
+// When someone new comes in through "Log in" (no tick box there), we confirm their code first, then
+// ask them to agree before creating the account. This short-lived signed note remembers which
+// email/phone they just proved is theirs, so they don't need a second code.
+const PENDING_KEY = crypto.randomBytes(32);
+const PENDING_MS = 15 * 60 * 1000;
+const signPending = (p) => crypto.createHmac('sha256', PENDING_KEY).update(p).digest('base64url');
+function pendingToken(type, value) {
+  const p = `${type}|${value}|${Date.now() + PENDING_MS}`;
+  return `${Buffer.from(p).toString('base64url')}.${signPending(p)}`;
+}
+function readPending(token) {
+  const [b, sig] = String(token || '').split('.');
+  if (!b || !sig) return null;
+  const p = Buffer.from(b, 'base64url').toString();
+  if (!safeEqual(sig, signPending(p))) return null;
+  const [type, value, exp] = p.split('|');
+  if (!['email', 'phone'].includes(type) || !(Number(exp) > Date.now())) return null;
+  return { type, value };
+}
+
 if (IS_PROD && store.kind !== 'postgres') {
   console.warn('WARNING: running in production without DATABASE_URL. On hosts with a temporary disk ' +
     '(like Render free), every restart will sign everyone out. Set DATABASE_URL to a Postgres database.');
@@ -267,6 +287,21 @@ async function startSession(req, res, member, isNew) {
   res.json({ member: publicMember(member), isNew, needsProfile: !member.consent_at });
 }
 
+/**
+ * Code confirmed: log in. Members who already have an account don't need to tick anything again.
+ * Someone new must agree first, so if they haven't (they came through "Log in"), ask them.
+ */
+async function finishSignIn(req, res, type, value) {
+  const agreed = req.body.consent === true;
+  if (!agreed && !(await store.memberByVerified(type, value))) {
+    return res.json({ needsConsent: true, pending: pendingToken(type, value) });
+  }
+  const now = Date.now();
+  const { member, isNew } = await store.signInWith(type, value, now);
+  if (agreed) await store.recordConsent(member.id, now, req.body.sms === true);
+  await startSession(req, res, member, isNew);
+}
+
 // Step 1 (sign up AND log in): email or phone -> code
 app.post('/api/auth/start', h(async (req, res) => {
   const id = parseIdentifier(req.body.identifier);
@@ -276,7 +311,6 @@ app.post('/api/auth/start', h(async (req, res) => {
   if (id.type === 'phone' && !SMS_ENABLED) {
     return res.status(503).json({ error: "Sign-in by phone isn't available yet. Please use your email address.", code: 'sms_off' });
   }
-  if (req.body.consent !== true) return res.status(400).json(CONSENT_ERROR);
   if (!(await turnstileOk(req.body.turnstile, req.ip))) {
     return res.status(400).json({ error: 'Please complete the security check and try again.', code: 'turnstile' });
   }
@@ -291,24 +325,24 @@ app.post('/api/auth/verify', h(async (req, res) => {
   if (!id || code.length !== 6) {
     return res.status(400).json({ error: 'Enter the 6-digit code we sent you.' });
   }
-  if (req.body.consent !== true) return res.status(400).json(CONSENT_ERROR);
   const fail = await checkCode(id.value, id, code);
   if (fail) return res.status(fail.status).json(fail.body);
-  const now = Date.now();
-  const { member, isNew } = await store.signInWith(id.type, id.value, now);
-  await store.recordConsent(member.id, now, req.body.sms === true);
-  await startSession(req, res, member, isNew);
+  await finishSignIn(req, res, id.type, id.value);
 }));
 
 // Phone sign-in finished in the browser with Firebase: check Google's signed token, then log in.
 app.post('/api/auth/firebase', h(async (req, res) => {
-  if (req.body.consent !== true) return res.status(400).json(CONSENT_ERROR);
   const { phone, fail } = await phoneFromFirebase(req.body.idToken);
   if (fail) return res.status(fail.status).json(fail.body);
-  const now = Date.now();
-  const { member, isNew } = await store.signInWith('phone', phone, now);
-  await store.recordConsent(member.id, now, req.body.sms === true);
-  await startSession(req, res, member, isNew);
+  await finishSignIn(req, res, 'phone', phone);
+}));
+
+// A new person who came in through "Log in" has proved their email/phone and now ticked the box.
+app.post('/api/auth/join', h(async (req, res) => {
+  const p = readPending(req.body.pending);
+  if (!p) return res.status(400).json({ error: 'That took too long. Please start again.', restart: true });
+  if (req.body.consent !== true) return res.status(400).json(CONSENT_ERROR);
+  await finishSignIn(req, res, p.type, p.value);
 }));
 
 // Who am I?
