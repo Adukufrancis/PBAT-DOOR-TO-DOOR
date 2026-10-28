@@ -143,7 +143,16 @@
     if (!ok) $('#agree').focus();
     return ok;
   };
-  $('#agree').addEventListener('change', () => $('[data-field="consent"]').classList.remove('invalid'));
+  // Buttons look switched off until they can be used: Continue needs an email/phone typed in (and, on /join,
+  // the box ticked); "Join the movement" needs the box ticked. Tapping one anyway explains what's missing.
+  const syncButtons = () => {
+    const agreed = $('#agree').checked, typed = $('#identifier').value.trim() !== '';
+    $('#join').setAttribute('aria-disabled', String(!agreed));
+    $('#send').setAttribute('aria-disabled', String(!typed || (joining && !agreed)));
+  };
+  $('#agree').addEventListener('change', () => { $('[data-field="consent"]').classList.remove('invalid'); syncButtons(); });
+  $('#identifier').addEventListener('input', syncButtons);
+  syncButtons();
 
   // ---- Optional Cloudflare Turnstile bot check (only when the site has keys set) ----
   let tsWidget = null;

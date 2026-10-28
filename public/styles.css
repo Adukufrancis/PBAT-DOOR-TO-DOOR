@@ -680,3 +680,6 @@ footer.site .social-icon.soon { opacity: .45; }
   .gallery[data-photos="4"] { grid-template-rows: 300px 180px 220px; }
   .gallery[data-photos="4"] figure:nth-child(4) { grid-column: span 2; }
 }
+/* button that can't be used yet (e.g. until the agreement box is ticked) */
+.btn[aria-disabled="true"] { opacity: .45; filter: grayscale(.5); box-shadow: none; cursor: not-allowed; }
+.btn[aria-disabled="true"]:hover { transform: none; }
