@@ -41,6 +41,20 @@ const FIREBASE = process.env.FIREBASE_API_KEY && process.env.FIREBASE_PROJECT_ID
 const firebaseKeys = FIREBASE && createRemoteJWKSet(new URL(process.env.FIREBASE_JWKS_URL
   || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com'));
 const SMS_ENABLED = Boolean(FIREBASE || sms.provider) || !IS_PROD;
+// Optional Cloudflare Turnstile (bot check) on code requests: set both keys to switch it on.
+const TURNSTILE = process.env.TURNSTILE_SITE_KEY && process.env.TURNSTILE_SECRET_KEY
+  ? { siteKey: process.env.TURNSTILE_SITE_KEY.trim(), secret: process.env.TURNSTILE_SECRET_KEY.trim() } : null;
+async function turnstileOk(token, ip) {
+  if (!TURNSTILE) return true;
+  try {
+    const r = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ secret: TURNSTILE.secret, response: String(token || ''), remoteip: ip || '' }),
+    });
+    return Boolean((await r.json()).success);
+  } catch (err) { console.error('Turnstile check failed:', err.message); return false; }
+}
+const CONSENT_ERROR = { error: 'Please tick the box to agree to the Privacy Policy and Terms.', field: 'consent' };
 
 if (IS_PROD && store.kind !== 'postgres') {
   console.warn('WARNING: running in production without DATABASE_URL. On hosts with a temporary disk ' +
@@ -144,6 +158,7 @@ app.get('/api/options', (req, res) =>
   res.json({
     states: STATES, genders: GENDERS, interests: INTERESTS, sms: SMS_ENABLED,
     phoneVia: FIREBASE && !sms.provider ? 'firebase' : 'server',
+    turnstile: TURNSTILE ? TURNSTILE.siteKey : null,
     firebase: FIREBASE ? { apiKey: FIREBASE.apiKey, authDomain: FIREBASE.authDomain, projectId: FIREBASE.projectId, sdk: FIREBASE.sdk } : null,
   }));
 
@@ -261,6 +276,10 @@ app.post('/api/auth/start', h(async (req, res) => {
   if (id.type === 'phone' && !SMS_ENABLED) {
     return res.status(503).json({ error: "Sign-in by phone isn't available yet. Please use your email address.", code: 'sms_off' });
   }
+  if (req.body.consent !== true) return res.status(400).json(CONSENT_ERROR);
+  if (!(await turnstileOk(req.body.turnstile, req.ip))) {
+    return res.status(400).json({ error: 'Please complete the security check and try again.', code: 'turnstile' });
+  }
   const { status, body } = await sendCode(req, id.value, id);
   res.status(status).json(body);
 }));
@@ -272,17 +291,23 @@ app.post('/api/auth/verify', h(async (req, res) => {
   if (!id || code.length !== 6) {
     return res.status(400).json({ error: 'Enter the 6-digit code we sent you.' });
   }
+  if (req.body.consent !== true) return res.status(400).json(CONSENT_ERROR);
   const fail = await checkCode(id.value, id, code);
   if (fail) return res.status(fail.status).json(fail.body);
-  const { member, isNew } = await store.signInWith(id.type, id.value, Date.now());
+  const now = Date.now();
+  const { member, isNew } = await store.signInWith(id.type, id.value, now);
+  await store.recordConsent(member.id, now, req.body.sms === true);
   await startSession(req, res, member, isNew);
 }));
 
 // Phone sign-in finished in the browser with Firebase: check Google's signed token, then log in.
 app.post('/api/auth/firebase', h(async (req, res) => {
+  if (req.body.consent !== true) return res.status(400).json(CONSENT_ERROR);
   const { phone, fail } = await phoneFromFirebase(req.body.idToken);
   if (fail) return res.status(fail.status).json(fail.body);
-  const { member, isNew } = await store.signInWith('phone', phone, Date.now());
+  const now = Date.now();
+  const { member, isNew } = await store.signInWith('phone', phone, now);
+  await store.recordConsent(member.id, now, req.body.sms === true);
   await startSession(req, res, member, isNew);
 }));
 
@@ -437,7 +462,8 @@ app.get('/api/geo/near', (req, res) => {
 });
 
 // One page handles both joining and logging in.
-app.get(['/join', '/signup'], (req, res) => res.redirect(302, '/login'));
+// /join is the one sign-up address used on every button; it shows the same screen as /login.
+app.get(['/join', '/signup'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 app.get('/welcome', (req, res) => res.redirect(302, '/account'));
 app.use('/geo', express.static(GEO_DIR, { maxAge: '7d' }));
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));

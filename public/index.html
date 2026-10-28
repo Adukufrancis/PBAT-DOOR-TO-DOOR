@@ -8,9 +8,16 @@
 <meta name="theme-color" content="#06492a">
 <meta property="og:title" content="PBAT DOOR TO DOOR Movement 2027">
 <meta property="og:description" content="Join the volunteer network taking President Bola Ahmed Tinubu's record door to door.">
-<meta property="og:image" content="/images/logo.png">
+<meta property="og:image" content="https://pbatdoor2door2027.org/images/share.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="PBAT Door to Door Movement 2027: Taking the record door to door.">
+<meta property="og:url" content="https://pbatdoor2door2027.org/">
+<meta property="og:site_name" content="PBAT DOOR TO DOOR">
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://pbatdoor2door2027.org/images/share.png">
+<link rel="canonical" href="https://pbatdoor2door2027.org/">
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32.png">
 <link rel="apple-touch-icon" href="/images/apple-touch-icon.png">
@@ -33,11 +40,10 @@
       <a href="/#movement">Movement</a>
       <a href="/#about">The President</a>
       <a href="/#works">His works</a>
-      <a href="/#gallery">Gallery</a>
     </div>
     <div class="nav-auth" id="nav-auth">
       <a class="nav-link" href="/login">Log in</a>
-      <a class="btn small" href="/login">Join now</a>
+      <a class="btn small" href="/join">Join now</a>
     </div>
     <button class="nav-toggle" id="nav-toggle" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="nav-drawer">
       <span></span><span></span><span></span>
@@ -158,7 +164,7 @@
       </div>
     </div>
     <ol class="timeline" id="timeline">
-      <li class="reveal"><time>29 March 1952</time><p>Born. This is the generally accepted date of birth.</p></li>
+      <li class="reveal"><time>29 March 1952</time><p>Born.</p></li>
       <li class="reveal"><time>1992 – 1993</time><p>Senator representing Lagos West in the Third Republic, until the Senate was dissolved in 1993.</p></li>
       <li class="reveal"><time>1999 – 2007</time><p>Governor of Lagos State for two terms.</p></li>
       <li class="reveal"><time>29 May 2023</time><p>Sworn in as the 16th President of Nigeria. On the same day he announced the end of the petrol subsidy.</p></li>
@@ -179,11 +185,11 @@
   </div>
 </section>
 
-<section class="block" id="gallery">
+<section class="block" id="gallery" hidden>
   <div class="wrap">
     <div class="section-head reveal">
       <span class="eyebrow">Gallery</span>
-      <h2>The President in pictures</h2>
+      <h2>The movement in pictures</h2>
     </div>
     <div class="gallery" id="gallery-grid"></div>
   </div>
@@ -215,24 +221,18 @@
   </div>
 </section>
 
-<footer class="site">
-  <div class="wrap">
-    <div class="foot-social" data-social="icons"></div>
-    <span class="foot-brand"><img src="/images/icon-192.png" alt="" width="28" height="28"> © <span id="year"></span> PBAT DOOR TO DOOR Movement</span>
-    <span><a href="/login">Join or log in</a></span>
-  </div>
-</footer>
+<footer class="site" id="site-footer"></footer>
 
 <script type="module">
-  import { $, $$, mountNav, loadImages } from '/app.js';
+  import { $, $$, mountNav, mountFooter, loadImages } from '/app.js';
   import { startMotion } from '/motion.js';
   import { renderSocial } from '/social.js';
 
   // ---- His works: edit this list to add or update achievements ----
   const WORKS = [
     { tag: 'Economy', title: 'Ended the petrol subsidy', figure: '29 May 2023',
-      text: 'Announced in his inaugural address. The subsidy had been costing Nigeria around $10 billion a year.',
-      source: 'Wikipedia', url: 'https://en.wikipedia.org/wiki/Bola_Tinubu' },
+      text: 'Announced in his inaugural address on 29 May 2023: "Fuel subsidy is gone."',
+      source: 'Inaugural address (full video), Channels TV', url: 'https://www.channelstv.com/2023/05/29/full-video-president-tinubus-inaugural-speech' },
     { tag: 'Economy', title: 'Unified the exchange rate', figure: '$7bn+ backlog cleared',
       text: "Merged Nigeria's multiple exchange-rate windows into one market in June 2023, narrowing the official and parallel market gap, and cleared the foreign exchange backlog.",
       source: 'THISDAY, May 2026', url: 'https://www.thisdaylive.com/2026/05/30/three-years-of-tinubu-four-successes-four-failures/' },
@@ -259,14 +259,12 @@
       source: 'The Authority, Sept 2026', url: 'https://authorityngr.com/2026/09/24/2027-what-achievements-will-president-tinubu-be-campaigning-on/' },
   ];
 
-  // ---- Gallery: put your own photos in /public/images (gallery-1.jpg … gallery-5.jpg) to replace these ----
-  const COMMONS = 'https://commons.wikimedia.org/wiki/';
+  // ---- Gallery: your own campaign photos ----
+  // Upload photos to public/images as gallery-1.jpg, gallery-2.jpg … (up to 12) and write a caption for each below
+  // (who, where, when, and the photographer's credit). The section stays hidden until at least one photo is uploaded.
   const PHOTOS = [
-    { file: 'Bola_A_Tinubu_presidential_portrait_2023.jpg', caption: 'Official presidential portrait, 2023' },
-    { file: 'Bola_Ahmed_Tinubu_in_red_outfit.jpg', caption: 'President Tinubu in traditional attire' },
-    { file: 'Asiwaju_Bola_Ahmed_Tinubu_(5980497975)_(cropped).jpg', caption: 'Asiwaju Bola Ahmed Tinubu, 2011' },
-    { file: 'Bola_Tinubu_portrait_(cropped).jpg', caption: 'Bola Ahmed Tinubu' },
-    { file: 'Symbol_of_Bola_Tinubu_cap_in_Apogbon,_Lagos.jpg', caption: 'The Tinubu cap symbol in Apongbon, Lagos' },
+    { caption: '' }, { caption: '' }, { caption: '' }, { caption: '' }, { caption: '' }, { caption: '' },
+    { caption: '' }, { caption: '' }, { caption: '' }, { caption: '' }, { caption: '' }, { caption: '' },
   ];
 
   const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -306,21 +304,21 @@
   });
 
   $('#gallery-grid').innerHTML = PHOTOS.map((p, i) => `
-    <figure class="ph reveal" data-initials="BAT">
-      <img loading="lazy" alt="${esc(p.caption)}"
-           data-sources="/images/gallery-${i + 1}.jpg|${COMMONS}Special:FilePath/${encodeURIComponent(p.file)}?width=${i === 0 ? 900 : 600}">
-      <figcaption>${esc(p.caption)}<br><a href="${COMMONS}File:${encodeURIComponent(p.file)}" target="_blank" rel="noopener">Photo: Wikimedia Commons</a></figcaption>
+    <figure class="ph" data-initials="PBAT">
+      <img loading="lazy" alt="${esc(p.caption || 'PBAT Door to Door Movement event')}" data-sources="/images/gallery-${i + 1}.jpg">
+      ${p.caption ? `<figcaption>${esc(p.caption)}</figcaption>` : ''}
     </figure>`).join('');
 
-  $('#year').textContent = new Date().getFullYear();
   loadImages();
   renderSocial();
+  mountFooter();
   startMotion();
-  // Gallery: remove any photo that can't load, and hide the section if none do.
+  // Gallery: drop photos that aren't uploaded; show the section only once at least one photo loads.
   const gal = $('#gallery-grid');
-  gal.querySelectorAll('figure').forEach((f) => new MutationObserver(() => {
-    if (f.classList.contains('missing')) { f.remove(); if (!gal.querySelector('figure')) $('#gallery').hidden = true; else gal.dataset.count = gal.children.length; }
-  }).observe(f, { attributes: true, attributeFilter: ['class'] }));
+  gal.querySelectorAll('figure').forEach((f) => {
+    $('img', f).addEventListener('load', () => { $('#gallery').hidden = false; gal.dataset.count = gal.querySelectorAll('figure:not(.missing)').length; }, { once: true });
+    new MutationObserver(() => { if (f.classList.contains('missing')) f.remove(); }).observe(f, { attributes: true, attributeFilter: ['class'] });
+  });
   const member = await mountNav();
   if (member) {
     // Signed in: send the "join" buttons to the account instead, and hide "I already have an account".

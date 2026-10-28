@@ -99,7 +99,19 @@ const QUERIES = {
                   WHERE member_id = $1 ORDER BY last_seen DESC`,
   deleteSession: 'DELETE FROM member_sessions WHERE token_hash = $1',
   deleteMemberSessions: 'DELETE FROM member_sessions WHERE member_id = $1',
+  // Consent given on the sign-up screen (timestamped). Unticking SMS later doesn't happen here.
+  recordConsent: `UPDATE members SET join_consent_at = COALESCE(join_consent_at, $2),
+                    sms_optin = CASE WHEN $3 = 1 THEN 1 ELSE sms_optin END,
+                    sms_consent_at = CASE WHEN $3 = 1 THEN COALESCE(sms_consent_at, $2) ELSE sms_consent_at END
+                  WHERE id = $1`,
 };
+
+// Columns added after the first release (added to existing databases on start-up).
+const ADDED_COLUMNS = [
+  ['join_consent_at', 'BIGINT', 'INTEGER'],
+  ['sms_optin', 'INTEGER NOT NULL DEFAULT 0', 'INTEGER NOT NULL DEFAULT 0'],
+  ['sms_consent_at', 'BIGINT', 'INTEGER'],
+];
 
 // Postgres returns BIGINT as strings; turn numeric columns back into numbers.
 const NUMERIC = new Set(['id', 'member_id', 'created_at', 'expires_at', 'sent_at', 'last_seen', 'attempts',
@@ -119,6 +131,7 @@ async function createPostgres(url) {
     max: 5,
   });
   await pool.query(SCHEMA('BIGINT', 'SERIAL PRIMARY KEY'));
+  for (const [col, pgType] of ADDED_COLUMNS) await pool.query(`ALTER TABLE members ADD COLUMN IF NOT EXISTS ${col} ${pgType}`);
   const q = async (name, params = []) => (await pool.query(QUERIES[name], params)).rows.map(fixRow);
   return { kind: 'postgres', q, close: () => pool.end() };
 }
@@ -128,6 +141,7 @@ async function createSqlite(file) {
   const db = new DatabaseSync(file);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
   db.exec(SCHEMA('INTEGER', 'INTEGER PRIMARY KEY AUTOINCREMENT'));
+  for (const [col, , liteType] of ADDED_COLUMNS) { try { db.exec(`ALTER TABLE members ADD COLUMN ${col} ${liteType}`); } catch {} }
   const stmts = {};
   const q = async (name, params = []) => {
     const sql = QUERIES[name].replace(/\$(\d+)/g, '?$1');
@@ -210,6 +224,8 @@ export async function createStore() {
         consents.length ? Math.min(...consents) : null, Math.min(keep.created_at, drop.created_at)]);
       return { memberId: keep.id, merged: true };
     },
+
+    recordConsent: (id, now, sms) => raw.q('recordConsent', [id, now, sms ? 1 : 0]),
 
     updateProfile: (id, profile, now) =>
       raw.q('updateProfile', [id, ...PROFILE_FIELDS.map((f) => profile[f] ?? ''), now]),

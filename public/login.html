@@ -25,11 +25,10 @@
       <a href="/#movement">Movement</a>
       <a href="/#about">The President</a>
       <a href="/#works">His works</a>
-      <a href="/#gallery">Gallery</a>
     </div>
     <div class="nav-auth" id="nav-auth">
       <a class="nav-link" href="/login">Log in</a>
-      <a class="btn small" href="/login">Join now</a>
+      <a class="btn small" href="/join">Join now</a>
     </div>
     <button class="nav-toggle" id="nav-toggle" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="nav-drawer">
       <span></span><span></span><span></span>
@@ -65,10 +64,18 @@
         <div class="err"></div>
       </div>
       <p class="id-hint" id="hint" hidden></p>
+      <div class="consents" data-field="consent">
+        <label class="check"><input type="checkbox" id="agree">
+          <span>I agree to join the PBAT Door to Door Movement and to the <a href="/privacy" target="_blank">Privacy Policy</a> and <a href="/terms" target="_blank">Terms</a>.</span></label>
+        <label class="check"><input type="checkbox" id="sms-optin">
+          <span>Send me updates by SMS and WhatsApp <em>(optional, you can stop anytime)</em>.</span></label>
+        <div class="err"></div>
+      </div>
+      <div id="turnstile" class="turnstile" hidden></div>
       <button class="btn block" id="send" type="submit" style="margin-top:16px"><span class="spinner"></span><span>Continue</span></button>
       <div class="msg err" id="id-err"></div>
       <div id="recaptcha"></div>
-      <p class="switch" style="font-size:13px">No password needed. You'll stay logged in on this device until you log out. <span style="opacity:.5">v4</span></p>
+      <p class="switch" style="font-size:13px">No password needed. You'll stay logged in on this device until you log out.</p>
     </form>
 
     <!-- Step 2: code -->
@@ -87,13 +94,15 @@
   </div>
 </main>
 
+<footer class="site" id="site-footer"></footer>
+
 <script type="module">
-  import { $, api, setLoading, message, devCodeNote, showStep, createOtp, cooldown, mountNav } from '/app.js';
+  import { $, api, setLoading, message, devCodeNote, showStep, createOtp, cooldown, mountNav, mountFooter } from '/app.js';
 
   let identifier = '';
   const me = await api('/api/me');
   if (me.ok) location.replace('/account');
-  mountNav({ member: null, page: 'login' });
+  mountNav({ member: null, page: 'login' }); mountFooter();
 
   const { data: opts } = await api('/api/options');
   if (!opts.sms) {
@@ -103,6 +112,21 @@
     $('#identifier').placeholder = 'you@example.com';
   }
   showStep('s-id'); $('#identifier').focus();
+
+  // ---- Consent (required) and SMS opt-in (optional), sent with every sign-in step ----
+  const consent = () => ({ consent: $('#agree').checked, sms: $('#sms-optin').checked });
+  $('#agree').addEventListener('change', () => $('[data-field="consent"]').classList.remove('invalid'));
+
+  // ---- Optional Cloudflare Turnstile bot check (only when the site has keys set) ----
+  let tsWidget = null;
+  if (opts.turnstile) {
+    window.onTurnstileLoad = () => { $('#turnstile').hidden = false; tsWidget = window.turnstile.render('#turnstile', { sitekey: opts.turnstile, size: 'flexible' }); };
+    const s = document.createElement('script');
+    s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad&render=explicit'; s.async = true;
+    document.head.append(s);
+  }
+  const tsToken = () => (tsWidget != null ? window.turnstile.getResponse(tsWidget) : undefined);
+  const tsReset = () => { if (tsWidget != null) window.turnstile.reset(tsWidget); };
 
   // ---- Phone codes through Google Firebase (when the server says so) ----
   const useFirebase = (id) => opts.phoneVia === 'firebase' && !id.includes('@');
@@ -163,7 +187,7 @@
     try {
       const cred = await confirmation.confirm(code);
       const idToken = await cred.user.getIdToken();
-      const res = await api('/api/auth/firebase', { idToken });
+      const res = await api('/api/auth/firebase', { idToken, ...consent() });
       try { await fb.signOut(fb.auth); } catch {}   // our own session takes over from here
       return res;
     } catch (e) {
@@ -175,7 +199,8 @@
 
   async function send() {
     if (useFirebase(identifier)) return sendFirebase();
-    const { ok, data } = await api('/api/auth/start', { identifier });
+    const { ok, data } = await api('/api/auth/start', { identifier, ...consent(), turnstile: tsToken() });
+    tsReset();
     if (!ok) {
       if (data.retryAfter) cooldown($('#resend'), data.retryAfter);
       return { error: data.error || 'Something went wrong.', retry: Boolean(data.retryAfter) };
@@ -196,6 +221,10 @@
     field.classList.toggle('invalid', bad);
     $('.err', field).textContent = bad ? (value.includes('@') || !opts.sms ? 'Enter a valid email address.' : 'Enter a valid email or Nigerian phone number, e.g. 0803 123 4567.') : '';
     if (bad) return $('#identifier').focus();
+    const cbox = $('[data-field="consent"]');
+    cbox.classList.toggle('invalid', !$('#agree').checked);
+    $('.err', cbox).textContent = $('#agree').checked ? '' : 'Please tick the box to agree before continuing.';
+    if (!$('#agree').checked) return $('#agree').focus();
 
     identifier = value; message($('#id-err'), '');
     const btn = $('#send'); setLoading(btn, true);
@@ -213,7 +242,7 @@
     if (code.length !== 6) return message($('#code-err'), 'Enter all 6 digits.');
     const btn = $('#verify'); if (btn.disabled) return;
     setLoading(btn, true);
-    const { ok, data } = useFirebase(identifier) && confirmation ? await verifyFirebase(code) : await api('/api/auth/verify', { identifier, code });
+    const { ok, data } = useFirebase(identifier) && confirmation ? await verifyFirebase(code) : await api('/api/auth/verify', { identifier, code, ...consent() });
     setLoading(btn, false);
     if (!ok) {
       otp.shake(); otp.clear();

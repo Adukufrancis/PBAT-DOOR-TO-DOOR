@@ -97,8 +97,8 @@ export async function mountNav({ member, page } = {}) {
     }
   } else {
     const onLogin = page === 'login';
-    auth.innerHTML = onLogin ? '' : `<a class="nav-link" href="/login">Log in</a><a class="btn small" href="/login">Join now</a>`;
-    drawer.innerHTML = `${links}${onLogin ? '' : '<a href="/login" class="btn block">Join or log in</a>'}`;
+    auth.innerHTML = onLogin ? '' : `<a class="nav-link" href="/login">Log in</a><a class="btn small" href="/join">Join now</a>`;
+    drawer.innerHTML = `${links}${onLogin ? '' : '<a href="/join" class="btn block">Join the movement</a><a href="/login" class="btn ghost block">Log in</a>'}`;
   }
   $$('[data-logout]', nav).forEach((b) => b.addEventListener('click', () => logout()));
 
@@ -551,4 +551,37 @@ function setupPlaces(container, v) {
         : `Couldn't get your location. ${how} Or choose from the lists below.`;
     });
   });
+}
+
+// ---- Site footer (same on every page) -----------------------------------------------
+// Put <footer class="site" id="site-footer"></footer> on a page and call mountFooter().
+export async function mountFooter() {
+  const box = document.getElementById('site-footer'); if (!box) return;
+  const [{ SITE, fillSite }, { renderSocial }] = await Promise.all([import('/site-info.js'), import('/social.js')]);
+  box.innerHTML = `
+    <div class="wrap foot-grid">
+      <div class="foot-col foot-about">
+        <a class="foot-brand" href="/"><img src="/images/icon-192.png" alt="PBAT Door to Door" width="36" height="36"><b>PBAT DOOR TO DOOR</b></a>
+        <p>A nationwide volunteer movement taking President Bola Ahmed Tinubu's record to every ward and polling unit.</p>
+        <div class="foot-social" data-social="icons"></div>
+      </div>
+      <nav class="foot-col" aria-label="Explore">
+        <h4>Explore</h4>
+        <a href="/">Home</a><a href="/#movement">The movement</a><a href="/#about">The President</a><a href="/#works">His works</a><a href="/join">Join the movement</a>
+      </nav>
+      <nav class="foot-col" aria-label="About this site">
+        <h4>About this site</h4>
+        <a href="/privacy">Privacy policy</a><a href="/terms">Terms of use</a><a href="/contact">Contact us</a><a href="/contact#official">Official accounts</a>
+      </nav>
+      <div class="foot-col">
+        <h4>Contact</h4>
+        <a data-site-mail="email"></a>
+        <span data-site-if="phone"><span data-site="phone"></span></span>
+      </div>
+    </div>
+    <div class="wrap foot-legal">
+      <span>© ${new Date().getFullYear()} <span data-site="name"></span>. Published by the <span data-site="name"></span>, <span data-site="address"></span>.</span>
+    </div>`;
+  fillSite(box);
+  renderSocial(box);
 }
