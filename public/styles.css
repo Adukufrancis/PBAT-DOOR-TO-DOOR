@@ -811,3 +811,12 @@ footer.site .social-icon.soon { opacity: .45; }
 .vol-cta:hover { background: #053b22; }
 /* keep section headings clear of the sticky header when jumping to #gallery, #works… */
 html { scroll-padding-top: 84px; }
+
+/* =====================================================================
+   Big screens (iMac, large monitors): scale the whole site up so it fills the screen
+   instead of sitting in a narrow column. Phones, tablets and laptops are unchanged.
+   ===================================================================== */
+@media (min-width: 1600px) { .wrap { width: min(1240px, 100% - 64px); } html { zoom: 1.12; } }
+@media (min-width: 1900px) { html { zoom: 1.25; } }
+@media (min-width: 2300px) { html { zoom: 1.45; } }
+@media (min-width: 3000px) { html { zoom: 1.8; } }
