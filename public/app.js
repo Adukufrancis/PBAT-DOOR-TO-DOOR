@@ -511,7 +511,13 @@ function setupPlaces(container, v) {
   btn.addEventListener('click', () => {
     if (!navigator.geolocation) { status.textContent = "Your browser can't share your location."; return; }
     btn.disabled = true; status.textContent = 'Finding your location…'; list.innerHTML = '';
-    navigator.geolocation.getCurrentPosition(async (pos) => {
+    // Try precise GPS first; indoors or on laptops that can be slow or fail, so fall back to the
+    // quicker approximate location (WiFi / mobile network) before giving up.
+    const getPos = (opts) => new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, opts));
+    getPos({ enableHighAccuracy: true, timeout: 10000, maximumAge: 120000 })
+      .catch((err) => (err.code === 1 ? Promise.reject(err)
+        : (status.textContent = 'Still looking… using your approximate location', getPos({ enableHighAccuracy: false, timeout: 20000, maximumAge: 600000 }))))
+      .then(async (pos) => {
       status.textContent = 'Looking up polling units…';
       const { ok, data } = await api(`/api/geo/near?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}`);
       btn.disabled = false;
@@ -534,9 +540,15 @@ function setupPlaces(container, v) {
         });
         list.append(b);
       }
-    }, (err) => {
+    }).catch((err) => {
       btn.disabled = false;
-      status.textContent = err.code === 1 ? 'Location permission was declined. Choose from the lists below.' : "Couldn't get your location. Choose from the lists below.";
-    }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+      const ios = /iPhone|iPad/.test(navigator.userAgent), mac = /Macintosh/.test(navigator.userAgent) && !ios;
+      const how = ios ? 'On iPhone: Settings → Privacy & Security → Location Services → turn it on, then Safari Websites → "While Using the App".'
+        : mac ? 'On Mac: System Settings → Privacy & Security → Location Services → turn on for your browser (Safari or Chrome).'
+        : 'Turn on Location (GPS) in your phone settings and allow this site to use your location.';
+      status.textContent = err?.code === 1
+        ? `Location permission was declined. To use this, allow location for this website (tap the "aA" or lock icon by the address). Or choose from the lists below.`
+        : `Couldn't get your location. ${how} Or choose from the lists below.`;
+    });
   });
 }
