@@ -820,3 +820,5 @@ html { scroll-padding-top: 84px; }
 @media (min-width: 1900px) { html { zoom: 1.25; } }
 @media (min-width: 2300px) { html { zoom: 1.45; } }
 @media (min-width: 3000px) { html { zoom: 1.8; } }
+/* Logged-in members: don't flash "Log in / Join now" before the header knows who they are */
+.signed-in:not(.nav-ready) .nav-auth, .signed-in:not(.page-ready) [data-nav] { visibility: hidden; }

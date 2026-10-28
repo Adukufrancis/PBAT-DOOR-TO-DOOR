@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<script>try{if(localStorage.getItem("pbat-me")){var d=document.documentElement;d.classList.add("signed-in");setTimeout(function(){d.classList.add("nav-ready","page-ready")},3000)}}catch(e){}</script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>My account · PBAT DOOR TO DOOR</title>
 <meta name="theme-color" content="#06492a">
@@ -144,7 +145,7 @@
 
   const { ok, status, data } = await api('/api/me');
   if (!ok && status === 0) {                       // no signal: don't send a logged-in member to the login page
-    mountNav({ member: null }); mountFooter();
+    mountNav(); mountFooter();                     // shows the remembered member while offline
     $('#boot').hidden = true; $('#content').hidden = false;
     $('#content').innerHTML = `<div class="card-lite" style="margin-top:24px"><h1>You're offline</h1>
       <p class="muted">Your account details need a connection. The <a href="/volunteer">volunteer area</a> and toolkit still work offline.</p>
