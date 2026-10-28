@@ -261,11 +261,14 @@
   ];
 
   // ---- Gallery: your own campaign photos ----
-  // Upload photos to public/images as gallery-1.jpg, gallery-2.jpg … (up to 12) and write a caption for each below
-  // (who, where, when, and the photographer's credit). The section stays hidden until at least one photo is uploaded.
+  // One line per photo, in order: public/images/gallery-1.jpg, gallery-2.jpg …
+  // The first one is shown big. To add a photo, upload gallery-5.jpg and add a line here.
+  // Captions: what, where, when, and the photographer's credit.
   const PHOTOS = [
-    { caption: '' }, { caption: '' }, { caption: '' }, { caption: '' }, { caption: '' }, { caption: '' },
-    { caption: '' }, { caption: '' }, { caption: '' }, { caption: '' }, { caption: '' }, { caption: '' },
+    { caption: 'Supporters at the campaign rally in Kaduna' },
+    { caption: 'A sea of flags at the Kaduna rally' },
+    { caption: 'Greeting the crowd' },
+    { caption: 'On the dais at the rally' },
   ];
 
   const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -304,6 +307,7 @@
     });
   });
 
+  $('#gallery-grid').dataset.photos = PHOTOS.length;
   $('#gallery-grid').innerHTML = PHOTOS.map((p, i) => `
     <figure class="ph" data-initials="PBAT">
       <img loading="lazy" alt="${esc(p.caption || 'PBAT Door to Door Movement event')}" data-sources="/images/gallery-${i + 1}.jpg">
@@ -314,11 +318,15 @@
   renderSocial();
   mountFooter();
   startMotion();
-  // Gallery: drop photos that aren't uploaded; show the section only once at least one photo loads.
+  // Gallery: shown when PHOTOS lists any; a photo whose file is missing is dropped, and if none are left the section hides.
   const gal = $('#gallery-grid');
+  $('#gallery').hidden = PHOTOS.length === 0;
   gal.querySelectorAll('figure').forEach((f) => {
-    $('img', f).addEventListener('load', () => { $('#gallery').hidden = false; gal.dataset.count = gal.querySelectorAll('figure:not(.missing)').length; }, { once: true });
-    new MutationObserver(() => { if (f.classList.contains('missing')) f.remove(); }).observe(f, { attributes: true, attributeFilter: ['class'] });
+    new MutationObserver(() => {
+      if (!f.classList.contains('missing')) return;
+      f.remove(); gal.dataset.photos = gal.children.length;
+      if (!gal.children.length) $('#gallery').hidden = true;
+    }).observe(f, { attributes: true, attributeFilter: ['class'] });
   });
   const member = await mountNav();
   if (member) {
