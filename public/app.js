@@ -567,7 +567,7 @@ export async function mountFooter() {
       </div>
       <nav class="foot-col" aria-label="Explore">
         <h4>Explore</h4>
-        <a href="/">Home</a><a href="/#movement">The movement</a><a href="/#about">The President</a><a href="/#works">His works</a><a href="/join">Join the movement</a>
+        <a href="/">Home</a><a href="/#movement">The movement</a><a href="/#about">The President</a><a href="/#works">His works</a><a href="/#gallery">Gallery</a><a href="/join">Join the movement</a>
       </nav>
       <nav class="foot-col" aria-label="About this site">
         <h4>About this site</h4>
