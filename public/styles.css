@@ -809,3 +809,5 @@ footer.site .social-icon.soon { opacity: .45; }
 .vol-cta small { color: rgba(255,255,255,.8); font-size: 14px; }
 .vol-cta > span:last-child { font-size: 24px; color: var(--gold); }
 .vol-cta:hover { background: #053b22; }
+/* keep section headings clear of the sticky header when jumping to #gallery, #works… */
+html { scroll-padding-top: 84px; }

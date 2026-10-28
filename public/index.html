@@ -329,6 +329,19 @@
       if (!gal.children.length) $('#gallery').hidden = true;
     }).observe(f, { attributes: true, attributeFilter: ['class'] });
   });
+  // Arriving from another page at /#gallery, /#works…: those sections are built by this script, so the browser's own jump
+  // happened before they existed and left people at the top. Jump now, and once more after photos load (unless they've
+  // started scrolling themselves).
+  if (location.hash.length > 1) {
+    let moved = false;
+    ['wheel', 'touchstart', 'keydown'].forEach((ev) => window.addEventListener(ev, () => { moved = true; }, { once: true, passive: true }));
+    const jump = () => {
+      const t = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+      if (t && !t.hidden && !moved) t.scrollIntoView({ block: 'start', behavior: 'instant' });   // jump, don't animate down the whole page
+    };
+    jump(); requestAnimationFrame(jump);
+    window.addEventListener('load', jump, { once: true });
+  }
   const member = await mountNav();
   if (member) {
     // Signed in: send the "join" buttons to the account instead, and hide "I already have an account".
