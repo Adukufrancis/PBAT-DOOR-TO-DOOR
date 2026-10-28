@@ -105,6 +105,20 @@ After it deploys, open the `onrender.com` URL and sign in. The logs show `db: po
 ### Email providers
 The app uses the first provider that's configured: `BREVO_API_KEY` → `RESEND_API_KEY` → `GMAIL_SCRIPT_URL` (needs your own domain) → `SMTP_HOST` (only works on paid Render plans or other hosts) → console output (development only).
 
+## Volunteer area and coordinators
+- **/volunteer** (any logged-in member): My Ward, Log a visit, Pledges, Leaderboard and the Doorstep toolkit.
+  Visits and pledges entered without signal are saved on the phone and sent automatically when the signal returns.
+- **/coordinator**: state coordinators see only their own state's volunteers, visits and pledges, and can download them.
+  National admins see every state and appoint coordinators on the same page.
+- **Who is a national admin:** set `NATIONAL_ADMINS` to the email(s) or phone number(s) they log in with, comma-separated,
+  e.g. `NATIONAL_ADMINS=boss@example.com, 08031234567`. Restart the app after changing it.
+- **Toolkit wording** lives in `public/toolkit.js`. Set `APPROVED = true` there once the movement has approved it.
+
+## Offline
+`public/sw.js` (a service worker) saves pages, styles, photos and polling-unit lists on the phone, so the site keeps working
+with poor or no signal; pages never opened before show `public/offline.html`. When you change the list of files in `sw.js`,
+bump its `VERSION`.
+
 ## Files
 ```
 server.js          Express routes, sessions, cookies
@@ -117,6 +131,11 @@ public/index.html  Landing page (photos, bio, works)
 public/login.html  Join or log in (email or phone)
 public/geo/         INEC polling-unit lists, one file per state
 public/account.html  Member area
+public/volunteer.html, volunteer-page.js  Volunteer area (offline-capable)
+public/coordinator.html, coordinator-page.js  Coordinator view
+public/toolkit.js  Doorstep toolkit wording (talking points, facts, hard questions)
+volunteer.js       Volunteer/coordinator API (visits, pledges, leaderboards, roles)
+public/sw.js, offline.html  Offline support
 public/app.js, styles.css  Shared code and styles
 public/images/     Your own photos (optional)
 render.yaml        Render Blueprint

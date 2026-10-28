@@ -11,6 +11,7 @@ import { createStore, PROFILE_FIELDS } from './store.js';
 import { createMailer } from './mailer.js';
 import { createSms } from './sms.js';
 import { validateProfile, parseIdentifier, normalizePhone, isEmail, STATES, GENDERS, INTERESTS } from './validate.js';
+import { mountVolunteer } from './volunteer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -354,7 +355,7 @@ app.get('/api/me', h(async (req, res) => {
     userAgent: s.user_agent,
     current: s.token_hash === req.sessionHash,
   }));
-  res.json({ member: publicMember(req.member), sessions });
+  res.json({ member: { ...publicMember(req.member), role: (await volunteerArea.roleOf(req.member)).role }, sessions });
 }));
 
 // Save my details (first time after sign-in, and later edits).
@@ -500,6 +501,9 @@ app.get('/api/geo/near', (req, res) => {
 app.get(['/join', '/signup'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 app.get('/welcome', (req, res) => res.redirect(302, '/account'));
 app.use('/geo', express.static(GEO_DIR, { maxAge: '7d' }));
+// Volunteer area and coordinator view (see volunteer.js).
+const volunteerArea = mountVolunteer(app, { store, h, normalizePhone, STATES });
+
 // The service worker must never be cached, or phones would keep running an old version of it.
 app.get('/sw.js', (req, res) => {
   res.set({ 'Cache-Control': 'no-cache', 'Service-Worker-Allowed': '/' });

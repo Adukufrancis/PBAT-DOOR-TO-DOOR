@@ -75,6 +75,8 @@ export async function mountNav({ member, page } = {}) {
         </button>
         <div class="user-pop" role="menu" hidden>
           <div class="user-head"><strong>${escHtml(member.full_name || 'New member')}</strong><span>${escHtml(contactOf(member))}</span></div>
+          <a role="menuitem" href="/volunteer">Volunteer area</a>
+          ${member.role && member.role !== 'volunteer' ? '<a role="menuitem" href="/coordinator">Coordinator view</a>' : ''}
           <a role="menuitem" href="/account">My account</a>
           <a role="menuitem" href="/account#edit">${member.profileComplete ? 'Edit my details' : 'Complete my profile'}</a>
           <hr>
@@ -84,6 +86,7 @@ export async function mountNav({ member, page } = {}) {
     drawer.innerHTML = `
       <div class="drawer-user"><span class="user-avatar">${escHtml(initials(member))}</span>
         <div><strong>${escHtml(member.full_name || 'New member')}</strong><span>${escHtml(contactOf(member))}</span></div></div>
+      <a href="/volunteer">Volunteer area</a>${member.role && member.role !== 'volunteer' ? '<a href="/coordinator">Coordinator view</a>' : ''}
       <a href="/account">My account</a>${links}
       <button type="button" class="drawer-logout" data-logout>Log out</button>`;
     const btn = $('.user-btn', auth), pop = $('.user-pop', auth);

@@ -54,6 +54,52 @@ const SCHEMA = (big, idDef) => `
     user_agent  TEXT
   );
   CREATE INDEX IF NOT EXISTS member_sessions_member_idx ON member_sessions(member_id);
+
+  -- Volunteer area: door-to-door visits a volunteer logs (client_id stops the same offline entry being saved twice).
+  -- The volunteer's state/LGA/ward are copied onto each row so coordinators can see activity by area.
+  CREATE TABLE IF NOT EXISTS visits (
+    id            ${idDef},
+    member_id     INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+    client_id     TEXT NOT NULL UNIQUE,
+    visit_date    TEXT NOT NULL,
+    households    INTEGER NOT NULL DEFAULT 0,
+    people        INTEGER NOT NULL DEFAULT 0,
+    area          TEXT NOT NULL DEFAULT '',
+    notes         TEXT NOT NULL DEFAULT '',
+    state         TEXT NOT NULL DEFAULT '',
+    lga           TEXT NOT NULL DEFAULT '',
+    ward          TEXT NOT NULL DEFAULT '',
+    created_at    ${big} NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS visits_member_idx ON visits(member_id);
+  CREATE INDEX IF NOT EXISTS visits_state_idx ON visits(state, created_at);
+
+  -- Pledges of support a volunteer records at the door, only with the person's consent.
+  CREATE TABLE IF NOT EXISTS pledges (
+    id            ${idDef},
+    member_id     INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+    client_id     TEXT NOT NULL UNIQUE,
+    full_name     TEXT NOT NULL,
+    phone         TEXT NOT NULL DEFAULT '',
+    polling_unit  TEXT NOT NULL DEFAULT '',
+    note          TEXT NOT NULL DEFAULT '',
+    consent_at    ${big} NOT NULL,
+    state         TEXT NOT NULL DEFAULT '',
+    lga           TEXT NOT NULL DEFAULT '',
+    ward          TEXT NOT NULL DEFAULT '',
+    created_at    ${big} NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS pledges_member_idx ON pledges(member_id);
+  CREATE INDEX IF NOT EXISTS pledges_state_idx ON pledges(state, created_at);
+
+  -- Coordinators: 'state' (sees only their state) or 'national' (sees everything, appoints coordinators).
+  CREATE TABLE IF NOT EXISTS roles (
+    member_id     INTEGER PRIMARY KEY REFERENCES members(id) ON DELETE CASCADE,
+    role          TEXT NOT NULL,
+    state         TEXT NOT NULL DEFAULT '',
+    assigned_by   INTEGER,
+    assigned_at   ${big} NOT NULL
+  );
 `;
 
 const MEMBER_COLS = `id, email, email_verified, phone, phone_verified, ${PROFILE_FIELDS.join(', ')}, consent_at, created_at`;
@@ -85,6 +131,9 @@ const QUERIES = {
   linkPhone: 'UPDATE members SET phone = $2, phone_verified = 1 WHERE id = $1',
   moveSessions: 'UPDATE member_sessions SET member_id = $2 WHERE member_id = $1',
   deleteMember: 'DELETE FROM members WHERE id = $1',
+  moveVisits: 'UPDATE visits SET member_id = $2 WHERE member_id = $1',
+  movePledges: 'UPDATE pledges SET member_id = $2 WHERE member_id = $1',
+  moveRole: 'UPDATE roles SET member_id = $2 WHERE member_id = $1 AND NOT EXISTS (SELECT 1 FROM roles r2 WHERE r2.member_id = $2)',
   mergeInto: `UPDATE members SET email = $2, email_verified = $3, phone = $4, phone_verified = $5,
                 ${PROFILE_FIELDS.map((f, i) => `${f} = $${i + 6}`).join(', ')},
                 consent_at = $${PROFILE_FIELDS.length + 6}, created_at = $${PROFILE_FIELDS.length + 7} WHERE id = $1`,
@@ -104,6 +153,61 @@ const QUERIES = {
                     sms_optin = CASE WHEN $3 = 1 THEN 1 ELSE sms_optin END,
                     sms_consent_at = CASE WHEN $3 = 1 THEN COALESCE(sms_consent_at, $2) ELSE sms_consent_at END
                   WHERE id = $1`,
+
+  // ---- Volunteer area ----
+  insertVisit: `INSERT INTO visits (member_id, client_id, visit_date, households, people, area, notes, state, lga, ward, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT (client_id) DO NOTHING`,
+  insertPledge: `INSERT INTO pledges (member_id, client_id, full_name, phone, polling_unit, note, consent_at, state, lga, ward, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT (client_id) DO NOTHING`,
+  myVisits: `SELECT client_id, visit_date, households, people, area, notes, created_at FROM visits
+             WHERE member_id = $1 ORDER BY visit_date DESC, created_at DESC LIMIT 20`,
+  myPledges: `SELECT client_id, full_name, polling_unit, created_at FROM pledges WHERE member_id = $1 ORDER BY created_at DESC LIMIT 20`,
+  myTotals: `SELECT (SELECT COUNT(*) FROM visits WHERE member_id = $1) AS visits,
+                    (SELECT COALESCE(SUM(households), 0) FROM visits WHERE member_id = $1) AS households,
+                    (SELECT COALESCE(SUM(people), 0) FROM visits WHERE member_id = $1) AS people,
+                    (SELECT COUNT(*) FROM pledges WHERE member_id = $1) AS pledges`,
+  // How many members share my polling unit / ward / LGA / state.
+  areaCounts: `SELECT
+      (SELECT COUNT(*) FROM members WHERE consent_at IS NOT NULL AND state = $1 AND lga = $2 AND ward = $3 AND polling_unit = $4 AND polling_unit <> '') AS pu_count,
+      (SELECT COUNT(*) FROM members WHERE consent_at IS NOT NULL AND state = $1 AND lga = $2 AND ward = $3 AND ward <> '') AS ward_count,
+      (SELECT COUNT(*) FROM members WHERE consent_at IS NOT NULL AND state = $1 AND lga = $2 AND lga <> '') AS lga_count,
+      (SELECT COUNT(*) FROM members WHERE consent_at IS NOT NULL AND state = $1 AND state <> '') AS state_count`,
+  wardActivity: `SELECT COALESCE(SUM(households), 0) AS households, COUNT(*) AS visits FROM visits
+                 WHERE state = $1 AND lga = $2 AND ward = $3 AND created_at >= $4`,
+  wardPledges: 'SELECT COUNT(*) AS pledges FROM pledges WHERE state = $1 AND lga = $2 AND ward = $3',
+  stateCoordinators: `SELECT m.full_name FROM roles r JOIN members m ON m.id = r.member_id
+                      WHERE r.role = 'state' AND r.state = $1 ORDER BY m.full_name`,
+  // Leaderboards: households visited since $1, optionally narrowed to a state / LGA / ward ('' = any).
+  topVolunteers: `SELECT m.id, m.full_name, m.state, m.ward, SUM(v.households) AS households, COUNT(*) AS visits
+                  FROM visits v JOIN members m ON m.id = v.member_id
+                  WHERE v.created_at >= $1 AND ($2 = '' OR v.state = $2) AND ($3 = '' OR v.lga = $3) AND ($4 = '' OR v.ward = $4)
+                  GROUP BY m.id, m.full_name, m.state, m.ward ORDER BY households DESC, visits DESC LIMIT 20`,
+  topStates: `SELECT state, SUM(households) AS households, COUNT(*) AS visits, COUNT(DISTINCT member_id) AS volunteers
+              FROM visits WHERE created_at >= $1 AND state <> '' GROUP BY state ORDER BY households DESC LIMIT 37`,
+
+  // ---- Coordinators ('' state = all states, national only) ----
+  getRole: 'SELECT member_id, role, state FROM roles WHERE member_id = $1',
+  setRole: `INSERT INTO roles (member_id, role, state, assigned_by, assigned_at) VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (member_id) DO UPDATE SET role = EXCLUDED.role, state = EXCLUDED.state,
+              assigned_by = EXCLUDED.assigned_by, assigned_at = EXCLUDED.assigned_at`,
+  deleteRole: 'DELETE FROM roles WHERE member_id = $1',
+  listRoles: `SELECT r.member_id, r.role, r.state, r.assigned_at, m.full_name, m.email, m.phone FROM roles r
+              JOIN members m ON m.id = r.member_id ORDER BY r.role, r.state, m.full_name`,
+  coordVolunteers: `SELECT m.id, m.full_name, m.email, m.phone, m.gender, m.state, m.lga, m.ward, m.polling_unit, m.occupation,
+                      m.interests, m.sms_optin, m.created_at,
+                      (SELECT COUNT(*) FROM visits v WHERE v.member_id = m.id) AS visits,
+                      (SELECT COALESCE(SUM(households), 0) FROM visits v WHERE v.member_id = m.id) AS households,
+                      (SELECT COUNT(*) FROM pledges p WHERE p.member_id = m.id) AS pledges
+                    FROM members m WHERE m.consent_at IS NOT NULL AND ($1 = '' OR m.state = $1)
+                    ORDER BY m.state, m.lga, m.ward, m.full_name LIMIT 5000`,
+  coordPledges: `SELECT p.full_name, p.phone, p.polling_unit, p.note, p.state, p.lga, p.ward, p.created_at, m.full_name AS volunteer
+                 FROM pledges p JOIN members m ON m.id = p.member_id WHERE ($1 = '' OR p.state = $1)
+                 ORDER BY p.created_at DESC LIMIT 5000`,
+  coordByLgaMembers: `SELECT lga, COUNT(*) AS volunteers FROM members WHERE consent_at IS NOT NULL AND ($1 = '' OR state = $1)
+                      GROUP BY lga`,
+  coordByLgaVisits: `SELECT lga, COUNT(*) AS visits, COALESCE(SUM(households), 0) AS households FROM visits
+                     WHERE ($1 = '' OR state = $1) AND created_at >= $2 GROUP BY lga`,
+  coordByLgaPledges: 'SELECT lga, COUNT(*) AS pledges FROM pledges WHERE ($1 = \'\' OR state = $1) GROUP BY lga',
 };
 
 // Columns added after the first release (added to existing databases on start-up).
@@ -115,7 +219,8 @@ const ADDED_COLUMNS = [
 
 // Postgres returns BIGINT as strings; turn numeric columns back into numbers.
 const NUMERIC = new Set(['id', 'member_id', 'created_at', 'expires_at', 'sent_at', 'last_seen', 'attempts',
-  'consent_at', 'email_verified', 'phone_verified']);
+  'consent_at', 'email_verified', 'phone_verified', 'visits', 'households', 'people', 'pledges', 'volunteers',
+  'pu_count', 'ward_count', 'lga_count', 'state_count', 'assigned_at', 'assigned_by', 'sms_optin']);
 const fixRow = (r) => {
   if (!r) return r;
   for (const k of Object.keys(r)) if (NUMERIC.has(k) && r[k] != null) r[k] = Number(r[k]);
@@ -218,6 +323,7 @@ export async function createStore() {
       if (!email || !phone) return { conflict: true };
       const consents = [keep.consent_at, drop.consent_at].filter((x) => x != null);
       await raw.q('moveSessions', [drop.id, keep.id]);
+      for (const k of ['moveVisits', 'movePledges', 'moveRole']) await raw.q(k, [drop.id, keep.id]);
       await raw.q('deleteMember', [drop.id]);                  // frees its verified contacts for the keeper
       await raw.q('mergeInto', [keep.id, email[0], email[1], phone[0], phone[1],
         ...PROFILE_FIELDS.map((f) => keep[f] || drop[f] || ''),
@@ -236,5 +342,35 @@ export async function createStore() {
     listSessions: (memberId) => raw.q('listSessions', [memberId]),
     deleteSession: (hash) => raw.q('deleteSession', [hash]),
     deleteMemberSessions: (memberId) => raw.q('deleteMemberSessions', [memberId]),
+
+    // ---- Volunteer area ----
+    insertVisit: (m, v, now) => raw.q('insertVisit', [m.id, v.clientId, v.date, v.households, v.people, v.area, v.notes,
+      m.state || '', m.lga || '', m.ward || '', now]),
+    insertPledge: (m, p, now) => raw.q('insertPledge', [m.id, p.clientId, p.name, p.phone, p.pollingUnit, p.note, now,
+      m.state || '', m.lga || '', m.ward || '', now]),
+    myVisits: (id) => raw.q('myVisits', [id]),
+    myPledges: (id) => raw.q('myPledges', [id]),
+    myTotals: (id) => one('myTotals', [id]),
+    areaCounts: (m) => one('areaCounts', [m.state || '', m.lga || '', m.ward || '', m.polling_unit || '']),
+    wardActivity: (m, since) => one('wardActivity', [m.state || '', m.lga || '', m.ward || '', since]),
+    wardPledges: (m) => one('wardPledges', [m.state || '', m.lga || '', m.ward || '']),
+    stateCoordinators: (state) => raw.q('stateCoordinators', [state]),
+    topVolunteers: (since, state = '', lga = '', ward = '') => raw.q('topVolunteers', [since, state, lga, ward]),
+    topStates: (since) => raw.q('topStates', [since]),
+
+    getRole: (id) => one('getRole', [id]),
+    setRole: (id, role, state, by, now) => raw.q('setRole', [id, role, state, by, now]),
+    deleteRole: (id) => raw.q('deleteRole', [id]),
+    listRoles: () => raw.q('listRoles'),
+    coordVolunteers: (state) => raw.q('coordVolunteers', [state]),
+    coordPledges: (state) => raw.q('coordPledges', [state]),
+    async coordByLga(state, since) {
+      const rows = new Map();
+      const add = (list) => list.forEach((r) => rows.set(r.lga, { lga: r.lga, volunteers: 0, visits: 0, households: 0, pledges: 0, ...rows.get(r.lga), ...r }));
+      add(await raw.q('coordByLgaMembers', [state]));
+      add(await raw.q('coordByLgaVisits', [state, since]));
+      add(await raw.q('coordByLgaPledges', [state]));
+      return [...rows.values()].sort((a, b) => b.volunteers - a.volunteers || String(a.lga).localeCompare(String(b.lga)));
+    },
   };
 }

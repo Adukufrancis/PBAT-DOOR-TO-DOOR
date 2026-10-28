@@ -7,15 +7,15 @@
 // - Sign-in and account data (/api): never saved; always live.
 //
 // Bump VERSION when you change the list below; old saved copies are then cleared.
-const VERSION = 'v1';
+const VERSION = 'v2';
 const SHELL = `pbat-shell-${VERSION}`;
 const RUNTIME = `pbat-runtime-${VERSION}`;
 const GEO = 'pbat-geo-v1';
 const NETWORK_TIMEOUT_MS = 4000;
 
 const PRECACHE = [
-  '/', '/offline', '/login', '/join', '/privacy', '/terms', '/contact',
-  '/styles.css', '/app.js', '/motion.js', '/social.js', '/site-info.js',
+  '/', '/offline', '/login', '/join', '/privacy', '/terms', '/contact', '/volunteer', '/account',
+  '/styles.css', '/app.js', '/motion.js', '/social.js', '/site-info.js', '/volunteer-page.js', '/toolkit.js', '/phone.js',
   '/site.webmanifest', '/favicon.ico',
   '/images/logo-transparent.png', '/images/logo.png', '/images/icon-192.png', '/images/icon-512.png',
   '/images/favicon-32.png', '/images/hero.jpg',
