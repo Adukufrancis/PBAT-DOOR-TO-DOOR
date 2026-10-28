@@ -114,6 +114,13 @@ The app uses the first provider that's configured: `BREVO_API_KEY` → `RESEND_A
   e.g. `NATIONAL_ADMINS=boss@example.com, 08031234567`. Restart the app after changing it.
 - **Toolkit wording** lives in `public/toolkit.js`. Set `APPROVED = true` there once the movement has approved it.
 
+## Phone codes: SMS with a WhatsApp backup
+- **SMS:** Firebase (`FIREBASE_API_KEY`, `FIREBASE_PROJECT_ID`).
+- **WhatsApp backup:** Message Central VerifyNow (`MC_CUSTOMER_ID`, `MC_PASSWORD` = your Message Central login password).
+  If the text can't be sent, the code goes to WhatsApp automatically; if it doesn't arrive, a
+  "Send the code on WhatsApp" button appears after 30 seconds. No WhatsApp Business number is needed.
+- Set `MC_PRIMARY=1` to send the SMS through Message Central as well (cheaper than Firebase).
+
 ## Offline
 `public/sw.js` (a service worker) saves pages, styles, photos and polling-unit lists on the phone, so the site keeps working
 with poor or no signal; pages never opened before show `public/offline.html`. When you change the list of files in `sw.js`,

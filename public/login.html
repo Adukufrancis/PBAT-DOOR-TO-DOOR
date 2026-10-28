@@ -93,6 +93,10 @@
         <button type="button" class="linkish" id="back">← Use a different email or number</button>
         <button type="button" class="linkish" id="resend" disabled>Resend code</button>
       </div>
+      <div class="wa-fallback" id="wa-box" hidden>
+        <p>Didn't get the text message?</p>
+        <button type="button" class="btn ghost block" id="wa-send"><span class="spinner"></span><span>Send the code on WhatsApp</span></button>
+      </div>
     </form>
 
     <!-- Step 3 (only for someone new who came in through "Log in"): agree before the account is made -->
@@ -235,7 +239,37 @@
     }
   }
 
+  // ---- WhatsApp backup: if the text can't be sent, or doesn't arrive, send the code on WhatsApp instead ----
+  let viaWa = false, waTimer = null;
+  const isPhone = () => identifier && !identifier.includes('@');
+  function armWhatsApp(now = false) {
+    clearTimeout(waTimer); $('#wa-box').hidden = true;
+    if (!opts.whatsapp || !isPhone() || viaWa) return;
+    waTimer = setTimeout(() => { $('#wa-box').hidden = false; }, now ? 0 : 30000);   // give the SMS 30 seconds first
+  }
+  async function sendWhatsApp() {
+    const { ok, data } = await api('/api/auth/whatsapp', { identifier, turnstile: tsToken() });
+    tsReset();
+    if (!ok) {
+      if (data.retryAfter) cooldown($('#resend'), data.retryAfter);
+      return { error: data.error || 'Something went wrong.', retry: Boolean(data.retryAfter) };
+    }
+    viaWa = true; clearTimeout(waTimer); $('#wa-box').hidden = true;
+    $('#sent-msg').textContent = `We sent a 6-digit code on WhatsApp to ${data.sentTo}. Open WhatsApp to see it.`;
+    devCodeNote($('#dev-note'), data.devCode);
+    cooldown($('#resend'), data.cooldown);
+    return {};
+  }
+  $('#wa-send').addEventListener('click', async () => {
+    const btn = $('#wa-send'); setLoading(btn, true); message($('#code-err'), '');
+    const { error } = await sendWhatsApp();
+    setLoading(btn, false);
+    if (error) return message($('#code-err'), error);
+    message($('#code-err'), 'Code sent on WhatsApp.', 'ok'); otp.clear();
+  });
+
   async function send() {
+    if (viaWa) return sendWhatsApp();
     if (useFirebase(identifier)) return sendFirebase();
     const { ok, data } = await api('/api/auth/start', { identifier, ...consent(), turnstile: tsToken() });
     tsReset();
@@ -261,13 +295,18 @@
     if (bad) return $('#identifier').focus();
     if (joining && !agreed()) return;
 
-    identifier = value; message($('#id-err'), '');
+    identifier = value; viaWa = false; message($('#id-err'), '');
     const btn = $('#send'); setLoading(btn, true);
-    const { error, retry } = await send();
+    let { error, retry } = await send();
+    if (error && !retry && opts.whatsapp && isPhone()) {
+      // The text message couldn't be sent at all: try WhatsApp straight away.
+      const wa = await sendWhatsApp();
+      if (!wa.error) { error = null; message($('#code-err'), "We couldn't send a text message, so we sent your code on WhatsApp.", 'ok'); showStep('s-code'); otp.clear(); setLoading(btn, false); return; }
+    }
     setLoading(btn, false);
     if (error && !retry) return message($('#id-err'), error);
     message($('#code-err'), retry ? error : '');
-    showStep('s-code'); otp.clear();
+    showStep('s-code'); otp.clear(); armWhatsApp();
   });
 
   const otp = createOtp($('#otp'), () => $('#s-code').requestSubmit());
@@ -277,7 +316,7 @@
     if (code.length !== 6) return message($('#code-err'), 'Enter all 6 digits.');
     const btn = $('#verify'); if (btn.disabled) return;
     setLoading(btn, true);
-    const { ok, data } = useFirebase(identifier) && confirmation ? await verifyFirebase(code) : await api('/api/auth/verify', { identifier, code, ...consent() });
+    const { ok, data } = useFirebase(identifier) && confirmation && !viaWa ? await verifyFirebase(code) : await api('/api/auth/verify', { identifier, code, ...consent() });
     setLoading(btn, false);
     if (!ok) {
       otp.shake(); otp.clear();
@@ -312,7 +351,7 @@
     message($('#code-err'), 'A new code is on its way.', 'ok'); otp.clear();
   });
 
-  $('#back').addEventListener('click', () => { clearInterval($('#resend')._timer); showStep('s-id'); $('#identifier').focus(); });
+  $('#back').addEventListener('click', () => { clearInterval($('#resend')._timer); clearTimeout(waTimer); $('#wa-box').hidden = true; viaWa = false; showStep('s-id'); $('#identifier').focus(); });
 </script>
 </body>
 </html>

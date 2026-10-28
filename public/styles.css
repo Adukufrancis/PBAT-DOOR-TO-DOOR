@@ -822,3 +822,7 @@ html { scroll-padding-top: 84px; }
 @media (min-width: 3000px) { html { zoom: 1.8; } }
 /* Logged-in members: don't flash "Log in / Join now" before the header knows who they are */
 .signed-in:not(.nav-ready) .nav-auth, .signed-in:not(.page-ready) [data-nav] { visibility: hidden; }
+.wa-fallback { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); text-align: center; }
+.wa-fallback p { margin: 0 0 10px; font-size: 14px; color: var(--muted); }
+.wa-fallback .btn { border-color: #25d366; color: #128c4b; }
+.wa-fallback .btn:hover { background: #e9fbf0; }

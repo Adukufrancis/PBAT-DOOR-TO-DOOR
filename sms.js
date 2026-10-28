@@ -10,63 +10,12 @@
 //               In production, phone sign-in is switched off until a provider is set.
 // Phone numbers arrive in the form +2348031234567.
 
-export function createSms(env = process.env) {
+export function createSms(env = process.env, opts = {}) {
   const appName = env.APP_NAME || 'PBAT DOOR TO DOOR';
   const text = (code) => `${code} is your ${appName} code. It expires in 10 minutes. Don't share it with anyone.`;
 
-  if (env.MC_CUSTOMER_ID && (env.MC_PASSWORD || env.MC_KEY)) {
-    const base = (env.MC_BASE_URL || 'https://cpaas.messagecentral.com').trim().replace(/\/+$/, '');
-    const customerId = env.MC_CUSTOMER_ID.trim();
-    const key = (env.MC_KEY || Buffer.from(env.MC_PASSWORD).toString('base64')).trim();
-    const flow = (env.MC_FLOW || 'SMS').trim().toUpperCase() === 'WHATSAPP' ? 'WHATSAPP' : 'SMS';
-    const local = (phone) => phone.replace(/^\+?234/, '');            // 8031234567
-    let token = null, tokenAt = 0;
-
-    async function getToken(force = false) {
-      if (!force && token && Date.now() - tokenAt < 30 * 60 * 1000) return token;
-      const q = new URLSearchParams({ customerId, key, scope: 'NEW', country: '234' });
-      if (env.MC_EMAIL) q.set('email', env.MC_EMAIL);
-      const res = await fetch(`${base}/auth/v1/authentication/token?${q}`, { headers: { accept: '*/*' }, signal: AbortSignal.timeout(15000) });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok || !j.token) throw new Error(`Message Central login failed (${res.status}): ${JSON.stringify(j).slice(0, 200)}`);
-      token = j.token; tokenAt = Date.now();
-      return token;
-    }
-    async function call(method, path, params) {
-      for (let attempt = 0; attempt < 2; attempt++) {
-        const res = await fetch(`${base}${path}?${new URLSearchParams(params)}`, {
-          method, headers: { accept: '*/*', authToken: await getToken(attempt > 0) }, signal: AbortSignal.timeout(15000),
-        });
-        if (res.status === 401 && attempt === 0) continue;               // token expired: get a new one and retry
-        const j = await res.json().catch(() => ({}));
-        return { status: res.status, j };
-      }
-    }
-    const codeOf = (j) => Number(j?.responseCode ?? j?.data?.responseCode);
-
-    return {
-      provider: `messagecentral-${flow.toLowerCase()}`,
-      via: flow === 'WHATSAPP' ? 'whatsapp' : 'sms',
-      managed: true,
-      /** Ask Message Central to send a 6-digit code. Returns their verification id. */
-      async start(phone) {
-        const { status, j } = await call('POST', '/verification/v3/send',
-          { countryCode: '234', customerId, flowType: flow, mobileNumber: local(phone), otpLength: '6' });
-        const id = j?.data?.verificationId;
-        if (status >= 400 || codeOf(j) !== 200 || !id) throw new Error(`Message Central send failed (${status}): ${JSON.stringify(j).slice(0, 300)}`);
-        return String(id);
-      },
-      /** Returns 'ok', 'wrong' or 'expired'. Throws if Message Central can't be reached. */
-      async check(phone, verificationId, code) {
-        const { status, j } = await call('GET', '/verification/v3/validateOtp',
-          { countryCode: '234', mobileNumber: local(phone), verificationId, customerId, code, flowType: flow });
-        const rc = codeOf(j), st = j?.data?.verificationStatus;
-        if (st === 'VERIFICATION_COMPLETED' || (rc === 200 && status < 400)) return 'ok';
-        if (rc === 702 || rc === 700) return 'wrong';
-        if (rc === 705 || rc === 703 || rc === 800 || rc === 505) return 'expired';
-        throw new Error(`Message Central check failed (${status}): ${JSON.stringify(j).slice(0, 300)}`);
-      },
-    };
+  if (!opts.skipMessageCentral && env.MC_CUSTOMER_ID && (env.MC_PASSWORD || env.MC_KEY)) {
+    return createMessageCentral(env, env.MC_FLOW);
   }
 
   if (env.DAGESMS_API_KEY) {
@@ -146,4 +95,64 @@ export function createSms(env = process.env) {
     provider: null,
     send: async (phone, code) => console.log(`\n[dev] SMS code for ${phone}: ${code}\n`),
   };
+}
+
+/**
+ * Message Central VerifyNow: they create the code and send it from their own approved senders (no Sender ID,
+ * no CAC, no WhatsApp Business number needed). flow = 'SMS' or 'WHATSAPP'.
+ */
+export function createMessageCentral(env = process.env, flowName = 'SMS') {
+  const flow = String(flowName || 'SMS').trim().toUpperCase() === 'WHATSAPP' ? 'WHATSAPP' : 'SMS';
+
+    const base = (env.MC_BASE_URL || 'https://cpaas.messagecentral.com').trim().replace(/\/+$/, '');
+    const customerId = env.MC_CUSTOMER_ID.trim();
+    const key = (env.MC_KEY || Buffer.from(env.MC_PASSWORD).toString('base64')).trim();
+    const local = (phone) => phone.replace(/^\+?234/, '');            // 8031234567
+    let token = null, tokenAt = 0;
+
+    async function getToken(force = false) {
+      if (!force && token && Date.now() - tokenAt < 30 * 60 * 1000) return token;
+      const q = new URLSearchParams({ customerId, key, scope: 'NEW', country: '234' });
+      if (env.MC_EMAIL) q.set('email', env.MC_EMAIL);
+      const res = await fetch(`${base}/auth/v1/authentication/token?${q}`, { headers: { accept: '*/*' }, signal: AbortSignal.timeout(15000) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || !j.token) throw new Error(`Message Central login failed (${res.status}): ${JSON.stringify(j).slice(0, 200)}`);
+      token = j.token; tokenAt = Date.now();
+      return token;
+    }
+    async function call(method, path, params) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const res = await fetch(`${base}${path}?${new URLSearchParams(params)}`, {
+          method, headers: { accept: '*/*', authToken: await getToken(attempt > 0) }, signal: AbortSignal.timeout(15000),
+        });
+        if (res.status === 401 && attempt === 0) continue;               // token expired: get a new one and retry
+        const j = await res.json().catch(() => ({}));
+        return { status: res.status, j };
+      }
+    }
+    const codeOf = (j) => Number(j?.responseCode ?? j?.data?.responseCode);
+
+    return {
+      provider: `messagecentral-${flow.toLowerCase()}`,
+      via: flow === 'WHATSAPP' ? 'whatsapp' : 'sms',
+      managed: true,
+      /** Ask Message Central to send a 6-digit code. Returns their verification id. */
+      async start(phone) {
+        const { status, j } = await call('POST', '/verification/v3/send',
+          { countryCode: '234', customerId, flowType: flow, mobileNumber: local(phone), otpLength: '6' });
+        const id = j?.data?.verificationId;
+        if (status >= 400 || codeOf(j) !== 200 || !id) throw new Error(`Message Central send failed (${status}): ${JSON.stringify(j).slice(0, 300)}`);
+        return String(id);
+      },
+      /** Returns 'ok', 'wrong' or 'expired'. Throws if Message Central can't be reached. */
+      async check(phone, verificationId, code) {
+        const { status, j } = await call('GET', '/verification/v3/validateOtp',
+          { countryCode: '234', mobileNumber: local(phone), verificationId, customerId, code, flowType: flow });
+        const rc = codeOf(j), st = j?.data?.verificationStatus;
+        if (st === 'VERIFICATION_COMPLETED' || (rc === 200 && status < 400)) return 'ok';
+        if (rc === 702 || rc === 700) return 'wrong';
+        if (rc === 705 || rc === 703 || rc === 800 || rc === 505) return 'expired';
+        throw new Error(`Message Central check failed (${status}): ${JSON.stringify(j).slice(0, 300)}`);
+      },
+    };
 }

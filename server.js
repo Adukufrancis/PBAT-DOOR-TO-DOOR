@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createStore, PROFILE_FIELDS } from './store.js';
 import { createMailer } from './mailer.js';
-import { createSms } from './sms.js';
+import { createSms, createMessageCentral } from './sms.js';
 import { validateProfile, parseIdentifier, normalizePhone, isEmail, STATES, GENDERS, INTERESTS } from './validate.js';
 import { mountVolunteer } from './volunteer.js';
 
@@ -29,7 +29,6 @@ const COOKIE_MAX_AGE_MS = 400 * 24 * 60 * 60 * 1000;
 
 const store = await createStore();
 const mailer = createMailer();
-const sms = createSms();
 // Phone sign-in works in development (codes go to the console) and in production once an SMS provider is set.
 // Google Firebase phone sign-in: Google sends the code (no Sender ID / CAC). The browser does the
 // code step with Firebase, then hands us a signed ID token proving the number; we verify it here.
@@ -41,6 +40,14 @@ const FIREBASE = process.env.FIREBASE_API_KEY && process.env.FIREBASE_PROJECT_ID
 } : null;
 const firebaseKeys = FIREBASE && createRemoteJWKSet(new URL(process.env.FIREBASE_JWKS_URL
   || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com'));
+// Phone codes. With Firebase set up, Firebase sends the SMS and Message Central (MC_CUSTOMER_ID + MC_PASSWORD), if set
+// up, is the "Send it on WhatsApp instead" backup. Set MC_PRIMARY=1 to send the SMS through Message Central too.
+const MC_READY = Boolean(process.env.MC_CUSTOMER_ID && (process.env.MC_PASSWORD || process.env.MC_KEY));
+const MC_PRIMARY = MC_READY && (!FIREBASE || /^(1|true|yes)$/i.test(process.env.MC_PRIMARY || ''));
+const sms = createSms(process.env, { skipMessageCentral: !MC_PRIMARY });
+const whatsapp = MC_READY && sms.via !== 'whatsapp' ? createMessageCentral(process.env, 'WHATSAPP')
+  : !IS_PROD && !MC_READY ? { provider: 'console', via: 'whatsapp', async send(phone, code) { console.log(`[dev] WhatsApp code for ${phone}: ${code}`); } }
+    : null;
 const SMS_ENABLED = Boolean(FIREBASE || sms.provider) || !IS_PROD;
 // Optional Cloudflare Turnstile (bot check) on code requests: set both keys to switch it on.
 const TURNSTILE = process.env.TURNSTILE_SITE_KEY && process.env.TURNSTILE_SECRET_KEY
@@ -179,16 +186,20 @@ app.get('/api/options', (req, res) =>
   res.json({
     states: STATES, genders: GENDERS, interests: INTERESTS, sms: SMS_ENABLED,
     phoneVia: FIREBASE && !sms.provider ? 'firebase' : 'server',
+    whatsapp: Boolean(whatsapp),
     turnstile: TURNSTILE ? TURNSTILE.siteKey : null,
     firebase: FIREBASE ? { apiKey: FIREBASE.apiKey, authDomain: FIREBASE.authDomain, projectId: FIREBASE.projectId, sdk: FIREBASE.sdk } : null,
   }));
 
 // ---- Sending and checking 6-digit codes (used for sign-in and for linking a contact) ----
 // `key` is where the code is stored: the email/phone itself for sign-in, `link:<member>:<value>` for linking.
-async function sendCode(req, key, id) {
+async function sendCode(req, key, id, { channel } = {}) {
+  const wa = channel === 'whatsapp';
+  const provider = wa ? whatsapp : sms;
   const existing = await store.getCode(key);
   const now = Date.now();
-  if (existing && now - existing.sent_at < RESEND_COOLDOWN_MS) {
+  // Cooldown applies per channel, so "send it on WhatsApp instead" works straight after an SMS.
+  if (existing && (existing.channel === 'whatsapp') === wa && now - existing.sent_at < RESEND_COOLDOWN_MS) {
     const wait = Math.ceil((RESEND_COOLDOWN_MS - (now - existing.sent_at)) / 1000);
     return { status: 429, body: { error: `Please wait ${wait}s before requesting another code.`, retryAfter: wait } };
   }
@@ -196,30 +207,31 @@ async function sendCode(req, key, id) {
     return { status: 429, body: { error: 'Too many codes requested from this connection. Try again in an hour.' } };
   }
   const code = crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
-  const managed = id.type === 'phone' && sms.managed;     // provider creates and checks the code itself
+  const managed = id.type === 'phone' && provider.managed;   // provider creates and checks the code itself
   try {
     if (managed) {
-      const ref = await sms.start(id.value);              // remember the provider's reference, not a code hash
-      await store.upsertCode(key, id.type, `ext:${ref}`, now + CODE_TTL_MS, now);
+      const ref = await provider.start(id.value);            // remember the provider's reference, not a code hash
+      await store.upsertCode(key, wa ? 'whatsapp' : id.type, `${wa ? 'wa' : 'ext'}:${ref}`, now + CODE_TTL_MS, now);
     } else {
-      await store.upsertCode(key, id.type, sha256(`${key}:${code}`), now + CODE_TTL_MS, now);
+      await store.upsertCode(key, wa ? 'whatsapp' : id.type, sha256(`${key}:${code}`), now + CODE_TTL_MS, now);
       if (id.type === 'email') await mailer.send(id.value, code);
-      else await sms.send(id.value, code);
+      else await provider.send(id.value, code);
     }
   } catch (err) {
-    console.error(`${id.type === 'email' ? 'Email' : 'SMS'} send failed:`, err.message);
+    console.error(`${id.type === 'email' ? 'Email' : wa ? 'WhatsApp' : 'SMS'} send failed:`, err.message);
     await store.deleteCode(key);
     return { status: 502, body: { error: id.type === 'email'
       ? "We couldn't send the email. Check the address and try again shortly."
-      : "We couldn't send the text message. Check the number, or use your email instead." } };
+      : wa ? "We couldn't send the code on WhatsApp. Check the number is on WhatsApp, or use your email instead."
+        : "We couldn't send the text message. Check the number, or use your email instead." } };
   }
   const body = {
     ok: true, type: id.type, identifier: id.value, sentTo: mask(id), cooldown: RESEND_COOLDOWN_MS / 1000,
-    via: id.type === 'email' ? 'email' : (sms.via || 'sms'),
+    via: id.type === 'email' ? 'email' : (provider.via || 'sms'),
     expiresMinutes: managed ? null : CODE_TTL_MS / 60000,
   };
   // Without a provider in development, hand the code to the UI so the flow can be tested.
-  const noProvider = id.type === 'email' ? !mailer.provider : !sms.provider;
+  const noProvider = id.type === 'email' ? !mailer.provider : (!provider.provider || provider.provider === 'console');
   if (noProvider && !IS_PROD) body.devCode = code;
   return { status: 200, body };
 }
@@ -236,8 +248,12 @@ async function checkCode(key, id, code) {
     return { status: 429, body: { error: 'Too many wrong attempts. Request a new code.', expired: true } };
   }
   let result;
-  if (row.code_hash.startsWith('ext:')) {
-    try { result = await sms.check(id.value, row.code_hash.slice(4), code); }
+  if (row.code_hash.startsWith('ext:') || row.code_hash.startsWith('wa:')) {
+    const provider = row.code_hash.startsWith('wa:') ? whatsapp : sms;
+    try {
+      if (!provider?.check) throw new Error('code provider is no longer configured');
+      result = await provider.check(id.value, row.code_hash.slice(row.code_hash.indexOf(':') + 1), code);
+    }
     catch (err) {
       console.error('SMS verify failed:', err.message);
       return { status: 502, body: { error: "We couldn't check the code right now. Please try again in a moment." } };
@@ -316,6 +332,18 @@ app.post('/api/auth/start', h(async (req, res) => {
     return res.status(400).json({ error: 'Please complete the security check and try again.', code: 'turnstile' });
   }
   const { status, body } = await sendCode(req, id.value, id);
+  res.status(status).json(body);
+}));
+
+// "Didn't get the text? Send it on WhatsApp": same as step 1, but the code goes to WhatsApp (Message Central).
+app.post('/api/auth/whatsapp', h(async (req, res) => {
+  const id = parseIdentifier(req.body.identifier);
+  if (!id || id.type !== 'phone') return res.status(400).json({ error: 'Enter a valid Nigerian phone number (e.g. 0803 123 4567).' });
+  if (!whatsapp) return res.status(503).json({ error: "Codes on WhatsApp aren't available yet. Please use your email instead.", code: 'wa_off' });
+  if (!(await turnstileOk(req.body.turnstile, req.ip))) {
+    return res.status(400).json({ error: 'Please complete the security check and try again.', code: 'turnstile' });
+  }
+  const { status, body } = await sendCode(req, id.value, id, { channel: 'whatsapp' });
   res.status(status).json(body);
 }));
 
